@@ -1,0 +1,24 @@
+[project]
+name = "app"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+# ===== Ruff =====
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["outputs", "data", ".venv", "wandb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]  # 줄 길이는 formatter가 책임지게 두는 경우가 많음
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ===== Pytest =====
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]

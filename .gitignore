@@ -1,3 +1,7 @@
 note.*
 .ruff_cache
 __pycache__/
+.pytest_cache
+*.egg-info
+*.json
+*.yaml

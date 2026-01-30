@@ -1,5 +1,5 @@
 [project]
-name = "app"
+name = "CloZ-AI"
 version = "0.1.0"
 requires-python = ">=3.10"
 
@@ -22,3 +22,8 @@ indent-style = "space"
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["src"]
+
+
+# ===== Path =====
+[tool.setuptools]
+package-dir = {"" = "src"}

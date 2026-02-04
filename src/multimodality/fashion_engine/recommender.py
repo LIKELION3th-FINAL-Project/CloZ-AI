@@ -15,20 +15,24 @@ class FashionRecommender:
     def __init__(self, config: FashionConfig, encoder: CLIPEncoder):
         self.config = config
         self.encoder = encoder
-        self.item_db = {} # 기존 wardrobe 명칭을 item_db로 변경
+        self.item_db = {} 
         self.style_profiles = {}
+        # 카테고리 매핑 정보 내부화 (DBManager 의존성 제거를 위해)
+        self.categories_map = {"하의": "pant", "아우터": "outer", "상의": "shirt"}
 
-    def load_user_wardrobe(
-        self,
-        collection_name="mycloset-embedding"
-    ):
-        """ChromaDB 캐시를 활용하여 옷장 아이템 로드 (없을 때만 인코딩)"""
+    def load_user_wardrobe(self, collection_name="mycloset-embedding"):
+        """ChromaDB 캐시를 활용하여 옷장 아이템 로드"""
         category_map = {"상의": "top", "하의": "bottom", "아우터": "outer"}
+        # 내부 DB 명칭 매핑
         cat_to_db = {"top": "shirt", "bottom": "pant", "outer": "outer"}
 
         # Chroma 로드
-        client = chromadb.PersistentClient(path=self.config.chromadb_war_dir)
-        col = client.get_or_create_collection(name=collection_name)
+        try:
+            client = chromadb.PersistentClient(path=self.config.chromadb_war_dir)
+            col = client.get_or_create_collection(name=collection_name)
+        except Exception as e:
+            print(f"[Error] ChromaDB 로드 실패: {e}")
+            return {}
 
         loaded_from_chroma = 0
         computed_fallback = 0
@@ -39,6 +43,7 @@ class FashionRecommender:
         for kor_cat, eng_cat in category_map.items():
             path = os.path.join(self.config.base_dir, kor_cat)
             if not os.path.exists(path):
+                print(f"[WARN] 폴더 없음: {path}")
                 continue
 
             for f in os.listdir(path):
@@ -63,7 +68,7 @@ class FashionRecommender:
                 except Exception:
                     pass
 
-                # 2) 없으면 새로 임베딩 후 저장
+                # 2) 없으면 새로 임베딩
                 if emb_tensor is None:
                     try:
                         emb_tensor = self.encoder.encode_image(p).to(torch.float32)
@@ -81,14 +86,15 @@ class FashionRecommender:
                             embeddings=[emb_tensor.cpu().tolist()],
                             metadatas=[metadata],
                         )
-                    except Exception:
+                    except Exception as e:
+                        print(f"[Error] 인코딩 실패 ({f}): {e}")
                         skipped += 1
                         continue
 
-                # 메모리에 로드
+                # 메모리 로드 (중요: 메인 시스템 호환성을 위해 category를 '상의', '하의' 등으로 유지)
                 self.item_db[f] = {
                     "id": db_id,
-                    "category": eng_cat,
+                    "category": kor_cat, # 'top' 대신 '상의' 사용 (test_cases와 일치)
                     "path": p,
                     "embedding": emb_tensor.cpu(),
                 }
@@ -100,7 +106,7 @@ class FashionRecommender:
         return self.item_db
 
     def load_styles(self):
-        """ChromaDB에서 스타일별 레퍼런스 임베딩 로드"""
+        """스타일 레퍼런스 로드"""
         try:
             client = chromadb.PersistentClient(path=self.config.chromadb_ref_dir)
             collection = client.get_collection(name="reference_embeddings")
@@ -117,14 +123,14 @@ class FashionRecommender:
             print(f"스타일 로드 실패: {e}")
 
     def recommend_from_agent(self, agent_json: Dict, top_k: int = 5) -> Dict[str, List[Dict]]:
-        """분석된 인텐트를 기반으로 추천 (페널티 로직 포함)"""
+        """원본 수식 기반 추천"""
         original_query = agent_json.get("original_query", "")
         intent = agent_json.get("analyzed_intent", {})
         target_style = unicodedata.normalize('NFC', intent.get("style", "캐주얼"))
-        target_categories = intent.get("categories", ["top", "bottom", "outer"])
+        # intent의 카테고리가 ['상의', '하의'] 형태라고 가정
+        target_categories = intent.get("categories", ["상의", "하의", "아우터"])
         expanded_keywords = agent_json.get("expanded_keywords", [original_query])
 
-        # 쿼리 임베딩
         q_embs = [self.encoder.encode_text(kw) for kw in expanded_keywords]
         avg_q_emb = torch.stack(q_embs).mean(dim=0).to(torch.float32)
         avg_q_emb /= (avg_q_emb.norm() + 1e-8)
@@ -132,12 +138,11 @@ class FashionRecommender:
         all_results = {}
         for cat in target_categories:
             candidates = []
-            for item_key, data in self.item_db.items():
+            for f_name, data in self.item_db.items():
                 if data['category'] != cat: continue
 
                 text_sim = float((avg_q_emb * data['embedding']).sum())
 
-                # 스타일 점수 (고도화 버전)
                 style_final = 0.5
                 if target_style in self.style_profiles:
                     style_scores = []
@@ -150,7 +155,6 @@ class FashionRecommender:
                     top_3 = [s[0] for s in style_scores[:3]]
                     avg_all = np.mean([s[1] for s in style_scores])
 
-                    # 페널티 로직
                     penalty = 1.0
                     if target_style not in top_3: penalty *= 0.1
                     if avg_all > 0.30: penalty *= 0.2
@@ -160,12 +164,7 @@ class FashionRecommender:
                     style_final = (1 / (1 + np.exp(-z))) * penalty
 
                 combined = 0.3 * text_sim + 0.7 * style_final
-                candidates.append({
-                    **data, 
-                    "score": combined, 
-                    "text_sim": text_sim, 
-                    "style_sim": style_final
-                })
+                candidates.append({**data, "score": combined, "text_sim": text_sim, "style_sim": style_final})
 
             candidates.sort(key=lambda x: x['score'], reverse=True)
             all_results[cat] = candidates[:top_k]

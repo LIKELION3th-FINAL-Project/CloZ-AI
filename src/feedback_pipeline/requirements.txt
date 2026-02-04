@@ -1,0 +1,24 @@
+# ===========================================
+# CloZ-AI Feedback Pipeline Dependencies
+# ===========================================
+
+# Core
+python-dotenv>=1.0.0
+
+# LLM
+openai>=1.0.0
+google-generativeai>=0.3.0
+requests>=2.28.0
+
+# Embedding & Vector DB
+torch>=2.0.0
+transformers>=4.30.0
+chromadb>=0.4.0
+Pillow>=9.0.0
+
+# Data Processing
+numpy>=1.24.0
+tqdm>=4.65.0
+
+# Optional: GPU Support (uncomment if using CUDA)
+# --extra-index-url https://download.pytorch.org/whl/cu118

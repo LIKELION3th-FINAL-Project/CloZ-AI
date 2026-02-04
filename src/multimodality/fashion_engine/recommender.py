@@ -27,7 +27,7 @@ class FashionRecommender:
         cat_to_db = {"top": "shirt", "bottom": "pant", "outer": "outer"}
 
         # Chroma 로드
-        client = chromadb.PersistentClient(path=self.config.wardrobe_db_path)
+        client = chromadb.PersistentClient(path=self.config.chromadb_war_dir)
         col = client.get_or_create_collection(name=collection_name)
 
         loaded_from_chroma = 0
@@ -102,7 +102,7 @@ class FashionRecommender:
     def load_styles(self):
         """ChromaDB에서 스타일별 레퍼런스 임베딩 로드"""
         try:
-            client = chromadb.PersistentClient(path=self.config.chromadb_dir)
+            client = chromadb.PersistentClient(path=self.config.chromadb_ref_dir)
             collection = client.get_collection(name="reference_embeddings")
             data = collection.get(include=["embeddings", "metadatas"])
             

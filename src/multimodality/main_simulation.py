@@ -18,13 +18,12 @@ def run_fashion_system():
     
     # 데이터 준비
     print("\n" + "=" * 60)
-    print("2. 데이터베이스 및 아이템 로드")
+    print("2. 데이터베이스 및 아이템 로드 (ChromaDB 캐시 활용)")
     print("=" * 60)
-    # db.initialize_db() # 최초 1회 실행 필요 (주석 해제하여 사용)
-    recommender.load_user_items()
+    recommender.load_user_wardrobe()
     
     print("\n" + "=" * 60)
-    print("3. ChromaDB에서 레퍼런스 임베딩 로드")
+    print("3. ChromaDB에서 레퍼런스 스타일 로드")
     print("=" * 60)
     recommender.load_styles()
     
@@ -32,22 +31,25 @@ def run_fashion_system():
     test_cases = [
         {
             "original_query": "오늘 홍대 가서 친구들이랑 놀건데 어떻게 입을까?",
-            "analyzed_intent": {"style": "스트릿", "categories": ["top", "bottom", "outer"]},
+            "analyzed_intent": {"style": "스트릿", "categories": ["상의", "하의", "아우터"]},
             "expanded_keywords": ["oversized black hoodie", "wide cargo pants", "baggy street fit", "urban style"]
         },
         {
             "original_query": "소개팅 나가는데 깔끔하게 입고 싶어",
-            "analyzed_intent": {"style": "미니멀", "categories": ["top", "bottom", "outer"]},
+            "analyzed_intent": {"style": "미니멀", "categories": ["상의", "하의", "아우터"]},
             "expanded_keywords": ["white linen shirt", "beige straight slacks", "clean minimalist style", "neat fit"]
         },
         {
             "original_query": "날씨 좋은데 가볍게 산책할 때 입을 만한 거",
-            "analyzed_intent": {"style": "캐주얼", "categories": ["top", "bottom", "outer"]},
+            "analyzed_intent": {"style": "캐주얼", "categories": ["상의", "하의", "아우터"]},
             "expanded_keywords": ["vibrant blue knit", "light blue denim", "fresh daily look", "bright casual"]
         },
     ]
     
     all_results = {}
+    
+    # 카테고리 매핑 (planner 대응용)
+    cat_map_for_planner = {"상의": "shirt", "하의": "pant", "아우터": "outer"}
     
     for idx, test in enumerate(test_cases):
         print("\n" + "=" * 60)
@@ -55,7 +57,10 @@ def run_fashion_system():
         print("=" * 60)
         
         # 1. 추천 아이템 검색
-        recs = recommender.recommend(test, top_k=3)
+        recs_raw = recommender.recommend_from_agent(test, top_k=3)
+        
+        # Planner가 인식할 수 있는 키로 변환 (상의 -> shirt 등)
+        recs = {cat_map_for_planner.get(k, k): v for k, v in recs_raw.items()}
         
         # 결과 출력 (콘솔)
         for cat, items in recs.items():
@@ -92,13 +97,14 @@ def run_fashion_system():
                 print(f"\n7-{idx+1}. Fashion-VTON 이미지 생성")
                 print("-" * 60)
                 vton_result = vton.try_on(
-                    person_img_path="/content/model.webp",
+                    person_img_path=config.model_img_path,
                     outfit=best_outfits[0]['combination'],
                     output_prefix=f"/content/output",
                     idx=idx
                 )
                 
                 if vton_result:
+                    Visualizer.show_vton_result(vton_result, test['original_query'], idx)
                     Visualizer.show_vton_result(vton_result, test['original_query'], idx)
                 
                 all_results[idx] = {

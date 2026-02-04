@@ -11,8 +11,8 @@ def run_fashion_system():
     
     config = FashionConfig()
     encoder = CLIPEncoder(config)
-    db = FashionDBManager(config)
-    recommender = FashionRecommender(config, encoder, db)
+    # Recommender가 이제 자체적으로 이미지 경로를 처리하므로 db 인자를 제거합니다.
+    recommender = FashionRecommender(config, encoder) 
     planner = OutfitPlanner(encoder)
     vton = VTONManager()
     
@@ -48,7 +48,7 @@ def run_fashion_system():
     
     all_results = {}
     
-    # 카테고리 매핑 (planner 대응용)
+    # 카테고리 매핑 (Planner는 shirt, pant, outer 키를 기대함)
     cat_map_for_planner = {"상의": "shirt", "하의": "pant", "아우터": "outer"}
     
     for idx, test in enumerate(test_cases):
@@ -63,6 +63,10 @@ def run_fashion_system():
         recs = {cat_map_for_planner.get(k, k): v for k, v in recs_raw.items()}
         
         # 결과 출력 (콘솔)
+        if not recs:
+            print("  [알림] 추천된 아이템이 없습니다. 카테고리명을 확인해주세요.")
+            continue
+
         for cat, items in recs.items():
             print(f"\n  [{cat}] Top 3 Results:")
             for j, item in enumerate(items, 1):
@@ -99,12 +103,11 @@ def run_fashion_system():
                 vton_result = vton.try_on(
                     person_img_path=config.model_img_path,
                     outfit=best_outfits[0]['combination'],
-                    output_prefix=f"/content/output",
+                    output_prefix=f"output_q{idx}",
                     idx=idx
                 )
                 
                 if vton_result:
-                    Visualizer.show_vton_result(vton_result, test['original_query'], idx)
                     Visualizer.show_vton_result(vton_result, test['original_query'], idx)
                 
                 all_results[idx] = {

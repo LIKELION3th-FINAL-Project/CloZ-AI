@@ -7,18 +7,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 # FashionCLIP embedder import
-try:
-    from ...embedding_generator.generate_fashionclip_embeddings import FashionCLIPEmbedder
-except ImportError:
-    import sys
-    sys.path.append(str(Path(__file__).parent.parent.parent / "embedding_generator"))
-    from generate_fashionclip_embeddings import FashionCLIPEmbedder
+sys.path.append(str(Path(__file__).parent.parent.parent / "scripts"))
+from generate_fashionclip_embeddings import FashionCLIPEmbedder
 
 from ..interfaces.buying_trigger import BuyingTriggerInterface, BuyingRecommendation, ProductRecommendation
 from ..models import FeedbackScope, OutfitSet
-from ..config import get_config
-
-config = get_config()
+from ..utils.color_utils import get_brightness, get_colors_by_brightness, LIGHT_COLORS, DARK_COLORS
 
 try:
     import chromadb
@@ -37,12 +31,13 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
 
     def __init__(
         self,
-        threshold: float = None,
-        chroma_path: str = None,
-        collection_name: str = None,
-        metadata_path: str = None,
-        visual_metadata_path: str = None,
-        device: str = None
+        threshold: float = 0.15,  # FashionCLIP 텍스트-이미지 유사도는 보통 0.2~0.35
+        chroma_path: str = "data/chroma_db",
+        collection_name: str = "musinsa",
+        metadata_path: str = "data/musinsa_ranking_result.json",
+        visual_metadata_path: str = "data/visual_metadata_checkpoint.json",
+        device: str = None,
+        embedder: Optional[FashionCLIPEmbedder] = None
     ):
         """
         초기화
@@ -55,11 +50,9 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             visual_metadata_path: 시각적 메타데이터 JSON 경로 (color, style_tags)
             device: FashionCLIP 디바이스 ("cuda", "mps", or "cpu")
         """
-        self.threshold = threshold or config['embedding'].MUSINSA_THRESHOLD
-        self.metadata_path = metadata_path or str(config['paths'].MUSINSA_METADATA_PATH)
-        self.visual_metadata_path = visual_metadata_path or str(config['paths'].VISUAL_METADATA_PATH)
-        chroma_path = chroma_path or str(config['paths'].CHROMA_PATH)
-        collection_name = collection_name or config['embedding'].MUSINSA_COLLECTION
+        self.threshold = threshold
+        self.metadata_path = metadata_path
+        self.visual_metadata_path = visual_metadata_path
         self._metadata_cache: Dict[str, Dict] = {}  # 메타데이터 캐시
         self._visual_metadata_cache: Dict[str, Dict] = {}  # 시각적 메타데이터 캐시
 
@@ -80,12 +73,15 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             self.embedder = None
             return
 
-        # FashionCLIP 모델 로드
-        try:
-            self.embedder = FashionCLIPEmbedder(device=device, use_fp16=False)
-        except Exception as e:
-            print(f"[경고] FashionCLIP 로드 실패: {e}")
-            self.embedder = None
+        # FashionCLIP 모델 로드 (주입된 것이 없으면 생성)
+        if embedder:
+            self.embedder = embedder
+        else:
+            try:
+                self.embedder = FashionCLIPEmbedder(device=device, use_fp16=False)
+            except Exception as e:
+                print(f"[경고] FashionCLIP 로드 실패: {e}")
+                self.embedder = None
 
         # 메타데이터 로드
         self._load_metadata()
@@ -168,10 +164,12 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # 검색 쿼리 결정 (영어 우선)
+        # 1. 검색 쿼리 결정 (영어 우선)
         search_query = feedback_text
         avoid_colors = []
         prefer_styles = []
+        prefer_brightness = None  # "light" or "dark"
+        target_detail_cats = []  # 세부카테고리 필터
 
         if context:
             # 영어 요구사항 사용
@@ -180,6 +178,9 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 if isinstance(structured, dict):
                     if structured.get('requirements_en'):
                         search_query = " ".join(structured['requirements_en'])
+                    # 세부카테고리 추출
+                    if structured.get('target_detail_cats'):
+                        target_detail_cats = structured['target_detail_cats']
                     # 제한사항에서 색상 추출
                     for constraint in structured.get('constraints', []):
                         constraint_lower = constraint.lower()
@@ -190,6 +191,8 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                         # 다른 색상도 추가 가능
                     # mood에서 스타일 추출
                     prefer_styles = structured.get('mood', [])
+                    # 밝기 선호도 추출
+                    prefer_brightness = structured.get('prefer_brightness')
 
             # avoid_attributes에서도 추출
             if 'avoid_attributes' in context:
@@ -198,7 +201,13 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     avoid_colors.extend(avoid_attrs.get('colors', []))
                     # 스타일도 회피 가능
 
-        # FashionCLIP으로 쿼리 임베딩 생성
+        # [DEBUG] 필터 조건 확인
+        print(f"  [DEBUG] target_detail_cats: {target_detail_cats}")
+        print(f"  [DEBUG] prefer_brightness: {prefer_brightness}")
+        print(f"  [DEBUG] avoid_colors: {avoid_colors}")
+        print(f"  [DEBUG] prefer_styles: {prefer_styles}")
+
+        # 2. FashionCLIP으로 쿼리 임베딩 생성
         try:
             query_embedding = self.embedder.embed_text(search_query)
         except Exception as e:
@@ -209,16 +218,51 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # ChromaDB 유사도 검색
+        # 3. ChromaDB 유사도 검색
         try:
-            # 카테고리 필터링 (있으면)
+            # 카테고리 필터링 구성
             where_filter = None
+            filters = []
+
+            # 대분류 필터 (category_main)
             if target_category:
-                where_filter = {"category_main": target_category}
+                filters.append({"category_main": target_category})
+
+            # 세부분류 필터 (category_sub) - 무신사는 category_sub 사용
+            if target_detail_cats:
+                # 옷장 카테고리명 → 무신사 카테고리명 매핑
+                to_musinsa_cat = {
+                    "니트/스웨트": "니트/스웨터",
+                    "니트/스웨터": "니트/스웨터",
+                    "맨투맨": "맨투맨/스웨트셔츠",
+                    "스웨트셔츠": "맨투맨/스웨트셔츠",
+                    "후드": "후드 티셔츠",
+                    "후드티": "후드 티셔츠",
+                }
+                # 매핑된 카테고리로 변환
+                mapped_cats = []
+                for cat in target_detail_cats:
+                    if cat in to_musinsa_cat:
+                        mapped_cats.append(to_musinsa_cat[cat])
+                    else:
+                        mapped_cats.append(cat)
+
+                if len(mapped_cats) == 1:
+                    filters.append({"category_sub": mapped_cats[0]})
+                elif len(mapped_cats) > 1:
+                    filters.append({"$or": [{"category_sub": cat} for cat in mapped_cats]})
+
+            # 필터 결합
+            if len(filters) == 1:
+                where_filter = filters[0]
+            elif len(filters) > 1:
+                where_filter = {"$and": filters}
+
+            print(f"  [DEBUG] ChromaDB where_filter: {where_filter}")
 
             results = self.musinsa_collection.query(
                 query_embeddings=[query_embedding],
-                n_results=limit * 3,  # 필터링 후 limit개 남도록 여유있게
+                n_results=limit * 5,  # 필터링 후 limit개 남도록 여유있게
                 where=where_filter
             )
         except Exception as e:
@@ -229,7 +273,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # Threshold 필터링 및 상품 정보 구성
+        # 4. Threshold 필터링 및 상품 정보 구성
         candidates = []
         all_similarities = []
 
@@ -252,15 +296,30 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     if product_color and product_color.lower() in [c.lower() for c in avoid_colors]:
                         continue  # 제외
 
-                    # 점수 계산: 임베딩 유사도 (0.7) + 스타일 매칭 보너스 (0.3)
+                    # 밝기 선호도 필터링
+                    brightness_bonus = 0.0
+                    if prefer_brightness and product_color:
+                        product_brightness = get_brightness(product_color)
+                        if prefer_brightness == "light":
+                            if product_brightness == "dark":
+                                continue  # 어두운 색상 제외
+                            elif product_brightness == "light":
+                                brightness_bonus = 0.15  # 밝은 색상 보너스
+                        elif prefer_brightness == "dark":
+                            if product_brightness == "light":
+                                continue  # 밝은 색상 제외
+                            elif product_brightness == "dark":
+                                brightness_bonus = 0.15  # 어두운 색상 보너스
+
+                    # 점수 계산: 임베딩 유사도 (0.6) + 스타일 매칭 보너스 (0.25) + 밝기 보너스 (0.15)
                     style_bonus = 0.0
                     if prefer_styles and product_styles:
                         # 선호 스타일과 겹치는 개수에 따라 보너스
                         matching_styles = set(s.lower() for s in prefer_styles) & set(s.lower() for s in product_styles)
                         if matching_styles:
-                            style_bonus = min(len(matching_styles) * 0.1, 0.3)  # 최대 0.3
+                            style_bonus = min(len(matching_styles) * 0.1, 0.25)  # 최대 0.25
 
-                    final_score = similarity * 0.7 + style_bonus
+                    final_score = similarity * 0.6 + style_bonus + brightness_bonus
 
                     candidates.append({
                         'product_id': product_id,
@@ -275,7 +334,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             if all_similarities:
                 print(f"  [DEBUG] 무신사 검색 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
 
-        # 최종 점수 기준 정렬 및 상위 N개 선택
+        # 5. 최종 점수 기준 정렬 및 상위 N개 선택
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
         products = []
@@ -291,14 +350,18 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             if product:
                 products.append(product)
 
-        # 결과 반환
-        success = len(products) > 0
-        reasoning = f"'{search_query}' 검색 완료: {len(products)}개 상품 추천 (threshold={self.threshold})"
+        if not products:
+            return BuyingRecommendation(
+                success=False,
+                products=[],
+                reasoning=f"'{search_query}' 검색 결과 없음 (threshold: {self.threshold})",
+                target_category=target_category
+            )
 
         return BuyingRecommendation(
-            success=success,
+            success=True,
             products=products,
-            reasoning=reasoning,
+            reasoning=f"FashionCLIP 임베딩 유사도 검색 결과 ({len(products)}개 상품)",
             target_category=target_category
         )
 
@@ -312,57 +375,91 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
         styles: List[str] = None
     ) -> Optional[ProductRecommendation]:
         """
-        상품 추천 객체 생성
-
-        Args:
-            product_id: ChromaDB 상품 ID (예: "musinsa:5902454")
-            similarity: 유사도 점수
-            search_query: 검색 쿼리
-            style_bonus: 스타일 매칭 보너스
-            color: 상품 색상
-            styles: 상품 스타일 태그
-
-        Returns:
-            ProductRecommendation 또는 None
+        메타데이터를 조회하여 ProductRecommendation 생성
         """
-        styles = styles or []
-
-        # 메타데이터 캐시에서 조회
-        metadata = self._metadata_cache.get(product_id)
+        metadata = self._metadata_cache.get(product_id, {})
 
         if not metadata:
-            # ID 형식 변환 시도 (musinsa:123 → 123)
-            raw_id = product_id.replace("musinsa:", "")
-            metadata = self._metadata_cache.get(f"musinsa:{raw_id}")
+            # ChromaDB에서 직접 조회 시도
+            try:
+                result = self.musinsa_collection.get(
+                    ids=[product_id],
+                    include=["metadatas"]
+                )
+                if result['metadatas'] and result['metadatas'][0]:
+                    metadata = result['metadatas'][0]
+            except:
+                pass
 
         if not metadata:
             return None
+
+        # match_reason 구성
+        reason_parts = []
+        reason_parts.append(f"임베딩 유사도: {similarity:.3f}")
+        if color:
+            reason_parts.append(f"색상: {color}")
+        if styles:
+            reason_parts.append(f"스타일: {', '.join(styles[:3])}")
+        if style_bonus > 0:
+            reason_parts.append(f"스타일 보너스: +{style_bonus:.2f}")
+
+        return ProductRecommendation(
+            product_id=metadata.get('id', product_id.replace("musinsa:", "")),
+            product_name=metadata.get('product_name', 'Unknown'),
+            brand=metadata.get('brand', 'Unknown'),
+            price=metadata.get('price', 0),
+            category_main=metadata.get('category_main', '상의'),
+            category_sub=metadata.get('category_sub', ''),
+            image_url=metadata.get('image_url', ''),
+            product_url=metadata.get('product_url', ''),
+            match_score=similarity * 0.7 + style_bonus,  # 최종 점수
+            match_reason=" | ".join(reason_parts)
+        )
+
+    def get_target_category(self, feedback_scope: FeedbackScope) -> str:
+        """피드백 범위에 따른 타겟 카테고리 결정"""
+        scope_to_category = {
+            FeedbackScope.TOP: "상의",
+            FeedbackScope.BOTTOM: "바지",
+            FeedbackScope.OUTER: "아우터",
+            FeedbackScope.FULL: None,  # 전체
+        }
+        return scope_to_category.get(feedback_scope)
+
+    def check_availability(self, product_id: str) -> bool:
+        """상품 재고/판매 여부 확인"""
+        if not self.musinsa_collection:
+            return True
 
         try:
-            # 최종 점수 계산
-            final_score = similarity * 0.7 + style_bonus
+            result = self.musinsa_collection.get(ids=[product_id])
+            return bool(result['ids'])
+        except:
+            return False
 
-            # 추천 이유 생성
-            reason_parts = [f"임베딩 유사도: {similarity:.3f}"]
-            if color:
-                reason_parts.append(f"색상: {color}")
-            if styles:
-                reason_parts.append(f"스타일: {', '.join(styles[:2])}")
-            if style_bonus > 0:
-                reason_parts.append(f"스타일 보너스: +{style_bonus:.2f}")
 
-            return ProductRecommendation(
-                product_id=int(metadata.get('id', 0)),
-                product_name=metadata.get('product_name', ''),
-                brand=metadata.get('brand', ''),
-                price=int(metadata.get('price', 0)),
-                category_main=metadata.get('category_main', ''),
-                category_sub=metadata.get('category_sub', ''),
-                product_url=metadata.get('product_url'),
-                product_image_path=metadata.get('product_image_path'),
-                match_score=final_score,
-                match_reason=" | ".join(reason_parts)
-            )
-        except Exception as e:
-            print(f"[경고] 상품 정보 생성 실패: {e}")
-            return None
+# 테스트용
+if __name__ == "__main__":
+    trigger = EmbeddingBuyingTrigger()
+
+    # 테스트: 밝은 니트 검색
+    result = trigger.recommend(
+        original_prompt="캐주얼한 데이트룩",
+        feedback_text="밝은 니트로 바꿔줘",
+        feedback_scope=FeedbackScope.TOP,
+        context={
+            "structured_query": {
+                "requirements_en": ["bright colored knit sweater"],
+                "target_detail_cats": ["니트/스웨트"],
+                "prefer_brightness": "light",
+                "mood": ["캐주얼", "밝은"]
+            }
+        }
+    )
+
+    print(f"\n추천 결과: {result.success}")
+    print(f"추천 상품 수: {len(result.products)}")
+    for p in result.products:
+        print(f"  - {p.brand}: {p.product_name[:30]}... (점수: {p.match_score:.3f})")
+        print(f"    이유: {p.match_reason}")

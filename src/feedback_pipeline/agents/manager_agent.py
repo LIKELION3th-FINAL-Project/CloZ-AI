@@ -765,6 +765,7 @@ class ManagerAgent:
         히스토리 기반 BUYING 결정 - 모든 피드백 종합
 
         재생성 횟수 초과 시 이전 피드백들을 모아서 추천에 활용
+        QueryBuilder로 구조화된 쿼리를 생성하여 필터링 정확도 향상
         """
         # 세션에서 모든 피드백 텍스트 수집
         all_feedbacks = []
@@ -786,12 +787,22 @@ class ManagerAgent:
             # 복수 scope 중 첫 번째 사용
             primary_scope = feedback.feedback_scopes[0] if feedback.feedback_scopes else FeedbackScope.FULL
 
+            # QueryBuilder로 구조화된 쿼리 생성 (target_detail_cats, prefer_brightness 등)
+            context = {}
+            try:
+                structured_info = self.query_builder.refine_original_query(combined_feedback)
+                if structured_info:
+                    context["structured_query"] = structured_info.to_dict()
+            except Exception as e:
+                print(f"[ManagerAgent] QueryBuilder 오류 (무시): {e}")
+
             buying_result = self.buying_trigger.recommend(
                 original_prompt=session.context.get("original_prompt", ""),
                 feedback_text=combined_feedback,  # 종합 피드백 사용
                 feedback_scope=primary_scope,
                 current_outfit=feedback.current_outfit,
-                limit=5
+                limit=5,
+                context=context  # 구조화된 쿼리 정보 전달
             )
 
         return ManagerDecision(

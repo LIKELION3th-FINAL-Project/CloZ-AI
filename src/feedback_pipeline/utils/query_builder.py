@@ -29,6 +29,8 @@ class RefinedQuery:
     requirements: List[str] = field(default_factory=list)  # 요구사항: ["상의는 밝은 색", "바지는 편한 핏"]
     requirements_en: List[str] = field(default_factory=list)  # 영어 요구사항 (FashionCLIP용): ["bright colored top", "comfortable fit pants"]
     constraints: List[str] = field(default_factory=list)   # 제한사항: ["검은색 제외", "타이트한 옷 제외"]
+    target_detail_cats: List[str] = field(default_factory=list)  # 타겟 세부카테고리: ["니트/스웨트", "후드 티셔츠"]
+    prefer_brightness: Optional[str] = None                 # 색상 밝기 선호: "light" or "dark"
     original_text: str = ""                                 # 원본 텍스트
 
     def to_dict(self) -> Dict[str, Any]:
@@ -39,8 +41,91 @@ class RefinedQuery:
             "requirements": self.requirements,
             "requirements_en": self.requirements_en,
             "constraints": self.constraints,
+            "target_detail_cats": self.target_detail_cats,
+            "prefer_brightness": self.prefer_brightness,
             "original_text": self.original_text,
         }
+
+
+@dataclass
+class StructuredOriginalQuery:
+    """
+    오리지널 쿼리에서 추출된 구조화된 정보 (LLM 분석 결과)
+
+    FashionCLIP 임베딩 검색용 영어 쿼리 생성에 사용됨
+    """
+    time_context: List[str] = field(default_factory=list)    # ["tomorrow", "weekend"]
+    color: List[str] = field(default_factory=list)           # ["black", "white", "gray"]
+    size_fit: List[str] = field(default_factory=list)        # ["moderately loose", "relaxed fit"]
+    season: List[str] = field(default_factory=list)          # ["early spring", "summer"]
+    location: List[str] = field(default_factory=list)        # ["Hongdae club", "cafe"]
+    mood: List[str] = field(default_factory=list)            # ["party/energetic", "casual"]
+    user_constraints: List[str] = field(default_factory=list)  # 회피사항
+    user_requirements: List[str] = field(default_factory=list) # 명시적 요구사항
+
+    def to_embedding_query(self) -> str:
+        """
+        구조화된 정보를 FashionCLIP용 영어 검색 쿼리로 변환
+
+        Returns:
+            영어 검색 쿼리 문자열 (예: "relaxed fit beige knit for spring casual cafe look")
+        """
+        parts = []
+
+        # 1. 핏 정보 (가장 중요 - 의류 특성)
+        if self.size_fit:
+            parts.extend(self.size_fit[:2])
+
+        # 2. 색상 정보
+        if self.color:
+            parts.extend(self.color[:3])
+
+        # 3. 시즌 정보
+        if self.season:
+            parts.extend(self.season)
+
+        # 4. 무드 정보
+        if self.mood:
+            parts.extend(self.mood)
+
+        # 5. 장소 정보 (스타일 힌트)
+        if self.location:
+            parts.extend([f"{loc} style" for loc in self.location])
+
+        # 6. 명시적 요구사항
+        if self.user_requirements:
+            parts.extend(self.user_requirements)
+
+        return " ".join(parts) if parts else "casual outfit"
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StructuredOriginalQuery":
+        """
+        LLM 분석 결과 딕셔너리에서 StructuredOriginalQuery 생성
+
+        Args:
+            data: LLM이 반환한 구조화된 딕셔너리
+
+        Returns:
+            StructuredOriginalQuery 인스턴스
+        """
+        def extract_values(field_data):
+            if isinstance(field_data, dict):
+                return field_data.get("value", [])
+            elif isinstance(field_data, list):
+                return field_data
+            return []
+
+        return cls(
+            time_context=extract_values(data.get("time_context", [])),
+            color=extract_values(data.get("color", [])),
+            size_fit=extract_values(data.get("size_fit", [])),
+            season=extract_values(data.get("season", [])),
+            location=extract_values(data.get("location", [])),
+            mood=extract_values(data.get("mood", [])),
+            user_constraints=extract_values(data.get("user_constraints", [])),
+            user_requirements=extract_values(data.get("user_requirements", []))
+        )
 
 
 @dataclass
@@ -159,7 +244,7 @@ class QueryBuilder:
                 f"{self.base_url}/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=10
+                timeout=30
             )
             response.raise_for_status()
 
@@ -204,6 +289,8 @@ class QueryBuilder:
                 requirements=parsed.get("requirements", []),
                 requirements_en=parsed.get("requirements_en", []),
                 constraints=parsed.get("constraints", []),
+                target_detail_cats=parsed.get("target_detail_cats", []),
+                prefer_brightness=parsed.get("prefer_brightness"),
                 original_text=original_query
             )
 
@@ -224,25 +311,38 @@ class QueryBuilder:
 사용자 요청: "{original_query}"
 
 ## 추출 항목
-- **mood**: 분위기, 스타일 키워드 (배열)
+1. **mood**: 분위기, 스타일 키워드 (배열)
    - 예: ["캐주얼", "편안한", "밝은", "모던한"]
 
-- **time**: 시간적 맥락 (문자열 또는 null)
+2. **time**: 시간적 맥락 (문자열 또는 null)
    - 예: "봄", "여름", "주말", "평일 오후"
 
-- **location**: 장소, 상황 (문자열 또는 null)
+3. **location**: 장소, 상황 (문자열 또는 null)
    - 예: "사무실", "데이트", "카페", "야외 활동"
 
-- **requirements**: 명시적 요구사항 - 한국어 (배열)
+4. **requirements**: 명시적 요구사항 - 한국어 (배열)
    - 예: ["상의는 밝은 색", "편한 핏", "정장 느낌"]
 
-- **requirements_en**: 명시적 요구사항 - 영어 번역 (배열)
+5. **requirements_en**: 명시적 요구사항 - 영어 번역 (배열)
    - FashionCLIP 임베딩 검색용 영어 번역
    - 의류 검색에 적합한 간결한 영어 표현 사용
    - 예: ["bright colored top", "comfortable fit", "formal style"]
 
-- **constraints**: 제한사항, 회피 사항 (배열)
+6. **constraints**: 제한사항, 회피 사항 (배열)
    - 예: ["검은색 제외", "타이트한 옷 제외", "화려한 패턴 제외"]
+
+7. **target_detail_cats**: 요청에서 언급된 의류 세부 카테고리 (배열)
+   - 반드시 아래 목록에서만 선택 (없으면 빈 배열):
+   - 상의: "니트/스웨트", "맨투맨/스웨트", "반소매 티셔츠", "셔츠/블라우스", "후드 티셔츠"
+   - 하의: "데님 팬츠", "슈트 팬츠/슬랙스", "코튼 팬츠", "트레이닝/조거 팬츠"
+   - 아우터: "경량 패딩/패딩 베스트", "숏패딩/헤비 아우터", "카디건", "코트", "후드 집업"
+   - 예: 사용자가 "니트로 바꿔줘"라고 하면 ["니트/스웨트"]
+
+8. **prefer_brightness**: 색상 밝기 선호 (문자열 또는 null)
+   - "light": 밝은색 선호 (밝은, 화사한, 연한, 파스텔 등)
+   - "dark": 어두운색 선호 (어두운, 진한, 무거운 등)
+   - null: 밝기 언급 없음
+   - 예: "밝은 니트로 바꿔줘" → "light", "어두운 색으로" → "dark"
 
 ## 출력 형식
 반드시 JSON으로만 반환:
@@ -252,7 +352,9 @@ class QueryBuilder:
   "location": "장소" 또는 null,
   "requirements": ["요구사항1", "요구사항2"],
   "requirements_en": ["requirement1 in English", "requirement2 in English"],
-  "constraints": ["제한사항1"]
+  "constraints": ["제한사항1"],
+  "target_detail_cats": ["세부카테고리1"],
+  "prefer_brightness": "light" 또는 "dark" 또는 null
 }}
 
 ## 예시
@@ -264,7 +366,9 @@ class QueryBuilder:
   "location": "데이트",
   "requirements": ["캐주얼한 봄 데이트룩"],
   "requirements_en": ["casual spring date outfit"],
-  "constraints": []
+  "constraints": [],
+  "target_detail_cats": [],
+  "prefer_brightness": null
 }}
 
 입력: "사무실에서 입을 편한 옷 추천. 검은색은 싫어"
@@ -275,18 +379,61 @@ class QueryBuilder:
   "location": "사무실",
   "requirements": ["편한 핏의 사무실 옷"],
   "requirements_en": ["comfortable office wear"],
-  "constraints": ["검은색 제외"]
+  "constraints": ["검은색 제외"],
+  "target_detail_cats": [],
+  "prefer_brightness": null
 }}
 
-입력: "밝은 색 상의로 바꿔줘"
+입력: "밝은 니트로 바꿔줘"
 출력:
 {{
   "mood": ["밝은"],
   "time": null,
   "location": null,
-  "requirements": ["밝은 색 상의"],
-  "requirements_en": ["bright colored top"],
-  "constraints": []
+  "requirements": ["밝은 색 니트로 변경"],
+  "requirements_en": ["bright colored knit sweater"],
+  "constraints": [],
+  "target_detail_cats": ["니트/스웨트"],
+  "prefer_brightness": "light"
+}}
+
+입력: "니트로 바꿔줘"
+출력:
+{{
+  "mood": [],
+  "time": null,
+  "location": null,
+  "requirements": ["니트로 변경"],
+  "requirements_en": ["knit sweater"],
+  "constraints": [],
+  "target_detail_cats": ["니트/스웨트"],
+  "prefer_brightness": null
+}}
+
+입력: "상의를 후드티로 바꿔줘"
+출력:
+{{
+  "mood": [],
+  "time": null,
+  "location": null,
+  "requirements": ["상의를 후드티로 변경"],
+  "requirements_en": ["hoodie top"],
+  "constraints": [],
+  "target_detail_cats": ["후드 티셔츠"],
+  "prefer_brightness": null
+}}
+
+입력: "어두운 색으로 바꿔줘"
+출력:
+{{
+  "mood": ["어두운"],
+  "time": null,
+  "location": null,
+  "requirements": ["어두운 색으로 변경"],
+  "requirements_en": ["dark colored clothing"],
+  "constraints": [],
+  "target_detail_cats": [],
+  "prefer_brightness": "dark"
 }}
 """
 
@@ -351,7 +498,7 @@ class QueryBuilder:
                 f"{self.base_url}/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=10
+                timeout=30
             )
             response.raise_for_status()
 
@@ -417,20 +564,20 @@ class QueryBuilder:
 
 <rules>
   <priority_rules>
-    - 피드백이 초기 요청과 모순되면 **최신 피드백을 우선**
-    - 부정 표현("~하지 말아줘", "~은 싫어")은 긍정 표현으로 전환
-    - 의도가 완전히 바뀐 경우 피드백만으로 쿼리 재구성
+    1. 피드백이 초기 요청과 모순되면 **최신 피드백을 우선**
+    2. 부정 표현("~하지 말아줘", "~은 싫어")은 긍정 표현으로 전환
+    3. 의도가 완전히 바뀐 경우 피드백만으로 쿼리 재구성
   </priority_rules>
 
   <preservation_rules>
-    - 초기 요청의 occasion(상황), season(계절), gender는 **피드백에서 명시적으로 변경하지 않는 한 유지**
-    - style, formality는 피드백에 따라 조정 가능
+    1. 초기 요청의 occasion(상황), season(계절), gender는 **피드백에서 명시적으로 변경하지 않는 한 유지**
+    2. style, formality는 피드백에 따라 조정 가능
   </preservation_rules>
 
   <expression_rules>
-    - 자연스러운 한국어 문장으로 표현 (단순 키워드 나열 금지)
-    - 불필요한 수식어("너무", "좀 더", "조금") 제거
-    - 최종 쿼리 길이: 15-50자 권장
+    1. 자연스러운 한국어 문장으로 표현 (단순 키워드 나열 금지)
+    2. 불필요한 수식어("너무", "좀 더", "조금") 제거
+    3. 최종 쿼리 길이: 15-50자 권장
   </expression_rules>
 </rules>
 
@@ -512,11 +659,11 @@ class QueryBuilder:
 </examples>
 
 <quality_check>
-  - JSON 형식 준수
-  - combined_query 길이: 15-50자
-  - 부정 표현 → 긍정 전환
-  - 불필요한 수식어 제거
-  - reasoning에 적용 규칙 명시
+  ✓ JSON 형식 준수
+  ✓ combined_query 길이: 15-50자
+  ✓ 부정 표현 → 긍정 전환
+  ✓ 불필요한 수식어 제거
+  ✓ reasoning에 적용 규칙 명시
 </quality_check>
 
 위 규칙과 예시를 참고하여 JSON만 반환하세요."""

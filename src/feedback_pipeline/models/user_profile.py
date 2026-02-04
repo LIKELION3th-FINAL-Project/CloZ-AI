@@ -9,10 +9,12 @@ from typing import Dict, List, Optional
 from datetime import datetime
 
 
-# ============================================
+from ..config import get_config
+
+config = get_config()
+
 # 신뢰도 기반 Profile 업데이트 설정
-# ============================================
-MIN_MENTIONS_FOR_PROFILE = 3        # 3회 이상 동일 키워드 언급 시 저장
+MIN_MENTIONS_FOR_PROFILE = config['pipeline'].MIN_MENTIONS_FOR_PROFILE
 CONFIDENCE_DECAY_DAYS = 30          # 30일 후 신뢰도 감소 시작
 
 

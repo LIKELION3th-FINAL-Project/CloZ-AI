@@ -4,10 +4,10 @@ Analyst Agent
 세션 종료 후 사용자 취향 분석 담당
 
 역할:
-1. 세션 로그에서 패턴 추출
-2. 승인된 코디에서 취향 학습
-3. UserProfile.biases 업데이트
-4. context_summary 생성
+- 세션 로그에서 패턴 추출
+- 승인된 코디에서 취향 학습
+- UserProfile.biases 업데이트
+- context_summary 생성
 
 LLM: gpt-4o (고품질 분석)
 실행: 비동기/배치 (세션 종료 후)
@@ -290,14 +290,14 @@ class AnalystAgent:
 {self._format_approved_outfits(approved_summary)}
 
 ## 분석 항목
-1. color_preferences: 선호/회피 색상
-2. fit_preferences: 핏 선호도 (oversized, regular, slim)
-3. style_keywords: 스타일 키워드 (최대 {self.config.style_keywords_limit}개)
-4. avoid_keywords: 회피 키워드
-5. subjective_mappings: 주관적 표현 → 구체적 매핑
-6. raw_insights: 분석 인사이트 (최대 {self.config.raw_insights_limit}개)
-7. context_summary: LLM 컨텍스트용 요약 (최대 {self.config.context_summary_max_length}자)
-8. confidence: 분석 신뢰도 (0.0 ~ 1.0)
+- color_preferences: 선호/회피 색상
+- fit_preferences: 핏 선호도 (oversized, regular, slim)
+- style_keywords: 스타일 키워드 (최대 {self.config.style_keywords_limit}개)
+- avoid_keywords: 회피 키워드
+- subjective_mappings: 주관적 표현 → 구체적 매핑
+- raw_insights: 분석 인사이트 (최대 {self.config.raw_insights_limit}개)
+- context_summary: LLM 컨텍스트용 요약 (최대 {self.config.context_summary_max_length}자)
+- confidence: 분석 신뢰도 (0.0 ~ 1.0)
 
 ## 응답 형식 (JSON)
 {{
@@ -359,13 +359,13 @@ class AnalystAgent:
 사용자의 피드백 히스토리를 분석하여 취향을 추출합니다.
 
 핵심 원칙:
-1. NO 피드백에서 회피 패턴을 추출하세요.
-2. YES(승인) 피드백에서 선호 패턴을 추출하세요.
-3. 반복되는 패턴에 높은 가중치를 두세요.
-4. 모호한 표현은 구체적으로 매핑하세요 (subjective_mappings).
-5. confidence는 데이터 양과 일관성에 따라 결정하세요.
-6. context_summary는 향후 코디 생성에 사용될 수 있도록 명확하게 작성하세요.
-7. 항상 유효한 JSON 형식으로 응답하세요."""
+- NO 피드백에서 회피 패턴을 추출하세요.
+- YES(승인) 피드백에서 선호 패턴을 추출하세요.
+- 반복되는 패턴에 높은 가중치를 두세요.
+- 모호한 표현은 구체적으로 매핑하세요 (subjective_mappings).
+- confidence는 데이터 양과 일관성에 따라 결정하세요.
+- context_summary는 향후 코디 생성에 사용될 수 있도록 명확하게 작성하세요.
+- 항상 유효한 JSON 형식으로 응답하세요."""
 
     def _parse_analysis_result(self, result: Dict[str, Any]) -> AnalysisResult:
         """LLM 응답 파싱"""
@@ -640,10 +640,10 @@ class AnalystAgent:
 {profile_info if profile_info else "정보 없음"}
 
 ## 분석 항목
-1. extracted_keywords: 사용자가 원하는 스타일/특성 (예: 캐주얼, 편한, 밝은)
-2. avoid_keywords: 사용자가 피하고 싶은 스타일/특성 (예: 딱딱한, 포멀)
-3. style_direction: 원하는 방향 요약 (1-2문장)
-4. category_sub_hints: 추천할 세부 카테고리 (예: 맨투맨/스웨트셔츠, 후드 티셔츠)
+- extracted_keywords: 사용자가 원하는 스타일/특성 (예: 캐주얼, 편한, 밝은)
+- avoid_keywords: 사용자가 피하고 싶은 스타일/특성 (예: 딱딱한, 포멀)
+- style_direction: 원하는 방향 요약 (1-2문장)
+- category_sub_hints: 추천할 세부 카테고리 (예: 맨투맨/스웨트셔츠, 후드 티셔츠)
 
 ## 세부 카테고리 목록
 상의: 반소매 티셔츠, 긴소매 티셔츠, 니트/스웨터, 맨투맨/스웨트셔츠, 민소매 티셔츠, 셔츠/블라우스, 피케/카라 티셔츠, 후드 티셔츠
@@ -672,11 +672,11 @@ class AnalystAgent:
 사용자의 피드백 텍스트를 분석하여 상품 추천에 사용할 키워드를 추출합니다.
 
 핵심 원칙:
-1. 피드백에서 명확한 의도를 추출하세요.
-2. "딱딱한", "무거운" 등 주관적 표현을 구체적인 패션 용어로 매핑하세요.
-3. 변경 범위(TOP, BOTTOM 등)를 고려하여 해당 카테고리 위주로 분석하세요.
-4. category_sub_hints는 실제 존재하는 카테고리명만 사용하세요.
-5. 항상 유효한 JSON 형식으로 응답하세요."""
+- 피드백에서 명확한 의도를 추출하세요.
+- "딱딱한", "무거운" 등 주관적 표현을 구체적인 패션 용어로 매핑하세요.
+- 변경 범위(TOP, BOTTOM 등)를 고려하여 해당 카테고리 위주로 분석하세요.
+- category_sub_hints는 실제 존재하는 카테고리명만 사용하세요.
+- 항상 유효한 JSON 형식으로 응답하세요."""
 
     def _parse_feedback_analysis_result(self, result: Dict[str, Any]) -> FeedbackAnalysisResult:
         """피드백 분석 결과 파싱"""

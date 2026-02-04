@@ -224,24 +224,24 @@ class QueryBuilder:
 사용자 요청: "{original_query}"
 
 ## 추출 항목
-1. **mood**: 분위기, 스타일 키워드 (배열)
+- **mood**: 분위기, 스타일 키워드 (배열)
    - 예: ["캐주얼", "편안한", "밝은", "모던한"]
 
-2. **time**: 시간적 맥락 (문자열 또는 null)
+- **time**: 시간적 맥락 (문자열 또는 null)
    - 예: "봄", "여름", "주말", "평일 오후"
 
-3. **location**: 장소, 상황 (문자열 또는 null)
+- **location**: 장소, 상황 (문자열 또는 null)
    - 예: "사무실", "데이트", "카페", "야외 활동"
 
-4. **requirements**: 명시적 요구사항 - 한국어 (배열)
+- **requirements**: 명시적 요구사항 - 한국어 (배열)
    - 예: ["상의는 밝은 색", "편한 핏", "정장 느낌"]
 
-5. **requirements_en**: 명시적 요구사항 - 영어 번역 (배열)
+- **requirements_en**: 명시적 요구사항 - 영어 번역 (배열)
    - FashionCLIP 임베딩 검색용 영어 번역
    - 의류 검색에 적합한 간결한 영어 표현 사용
    - 예: ["bright colored top", "comfortable fit", "formal style"]
 
-6. **constraints**: 제한사항, 회피 사항 (배열)
+- **constraints**: 제한사항, 회피 사항 (배열)
    - 예: ["검은색 제외", "타이트한 옷 제외", "화려한 패턴 제외"]
 
 ## 출력 형식
@@ -417,20 +417,20 @@ class QueryBuilder:
 
 <rules>
   <priority_rules>
-    1. 피드백이 초기 요청과 모순되면 **최신 피드백을 우선**
-    2. 부정 표현("~하지 말아줘", "~은 싫어")은 긍정 표현으로 전환
-    3. 의도가 완전히 바뀐 경우 피드백만으로 쿼리 재구성
+    - 피드백이 초기 요청과 모순되면 **최신 피드백을 우선**
+    - 부정 표현("~하지 말아줘", "~은 싫어")은 긍정 표현으로 전환
+    - 의도가 완전히 바뀐 경우 피드백만으로 쿼리 재구성
   </priority_rules>
 
   <preservation_rules>
-    1. 초기 요청의 occasion(상황), season(계절), gender는 **피드백에서 명시적으로 변경하지 않는 한 유지**
-    2. style, formality는 피드백에 따라 조정 가능
+    - 초기 요청의 occasion(상황), season(계절), gender는 **피드백에서 명시적으로 변경하지 않는 한 유지**
+    - style, formality는 피드백에 따라 조정 가능
   </preservation_rules>
 
   <expression_rules>
-    1. 자연스러운 한국어 문장으로 표현 (단순 키워드 나열 금지)
-    2. 불필요한 수식어("너무", "좀 더", "조금") 제거
-    3. 최종 쿼리 길이: 15-50자 권장
+    - 자연스러운 한국어 문장으로 표현 (단순 키워드 나열 금지)
+    - 불필요한 수식어("너무", "좀 더", "조금") 제거
+    - 최종 쿼리 길이: 15-50자 권장
   </expression_rules>
 </rules>
 
@@ -512,11 +512,11 @@ class QueryBuilder:
 </examples>
 
 <quality_check>
-  ✓ JSON 형식 준수
-  ✓ combined_query 길이: 15-50자
-  ✓ 부정 표현 → 긍정 전환
-  ✓ 불필요한 수식어 제거
-  ✓ reasoning에 적용 규칙 명시
+  - JSON 형식 준수
+  - combined_query 길이: 15-50자
+  - 부정 표현 → 긍정 전환
+  - 불필요한 수식어 제거
+  - reasoning에 적용 규칙 명시
 </quality_check>
 
 위 규칙과 예시를 참고하여 JSON만 반환하세요."""

@@ -6,10 +6,19 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 # FashionCLIP embedder import
-sys.path.append(str(Path(__file__).parent.parent.parent / "scripts"))
-from generate_fashionclip_embeddings import FashionCLIPEmbedder
+# src/embedding_generator/generate_fashionclip_embeddings.py 에서 가져옴
+try:
+    from ...embedding_generator.generate_fashionclip_embeddings import FashionCLIPEmbedder
+except ImportError:
+    # 패키지 구조가 다를 경우를 대비한 fallback
+    import sys
+    sys.path.append(str(Path(__file__).parent.parent.parent / "embedding_generator"))
+    from generate_fashionclip_embeddings import FashionCLIPEmbedder
 
 from ..interfaces.wardrobe_checker import WardrobeCheckerInterface, WardrobeCheckResult
+from ..config import get_config
+
+config = get_config()
 
 try:
     import chromadb
@@ -29,9 +38,9 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
 
     def __init__(
         self,
-        threshold: float = 0.2,  # FashionCLIP 텍스트-이미지 유사도는 보통 0.2~0.35
-        chroma_path: str = "data/chroma_db",
-        collection_name: str = "wardrobe",
+        threshold: float = None,
+        chroma_path: str = None,
+        collection_name: str = None,
         device: str = None
     ):
         """
@@ -43,7 +52,9 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             collection_name: 옷장 컬렉션 이름
             device: FashionCLIP 디바이스 ("cuda", "mps", or "cpu")
         """
-        self.threshold = threshold
+        self.threshold = threshold or config['embedding'].WARDROBE_THRESHOLD
+        chroma_path = chroma_path or str(config['paths'].CHROMA_PATH)
+        collection_name = collection_name or config['embedding'].WARDROBE_COLLECTION
 
         if not CHROMADB_AVAILABLE:
             print("[경고] chromadb가 설치되지 않음. Dummy 모드로 동작")
@@ -95,10 +106,10 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.5
             )
 
-        # 1. 쿼리 텍스트 결합
+        # 쿼리 텍스트 결합
         query_text = " ".join(requirements) if requirements else "casual outfit"
 
-        # 2. FashionCLIP으로 쿼리 임베딩 생성
+        # FashionCLIP으로 쿼리 임베딩 생성
         try:
             query_embedding = self.embedder.embed_text(query_text)
         except Exception as e:
@@ -109,7 +120,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.0
             )
 
-        # 3. ChromaDB 유사도 검색
+        # ChromaDB 유사도 검색
         try:
             results = self.wardrobe_collection.query(
                 query_embeddings=[query_embedding],
@@ -124,7 +135,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.0
             )
 
-        # 4. Threshold 필터링 (유사도 >= threshold)
+        # Threshold 필터링 (유사도 >= threshold)
         candidates = []
         all_similarities = []  # 디버깅용
 
@@ -147,7 +158,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             if all_similarities:
                 print(f"  [DEBUG] 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
 
-        # 5. 이전 추천 아이템 필터링 (중복 제거)
+        # 이전 추천 아이템 필터링 (중복 제거)
         previous_items = []
         if context and 'previous_items' in context:
             previous_items = context['previous_items']
@@ -155,7 +166,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         if previous_items and candidates:
             candidates = self._filter_previous_items(candidates, previous_items)
 
-        # 6. 결과 반환
+        # 결과 반환
         is_possible = len(candidates) > 0
         confidence = sum(c['similarity'] for c in candidates) / len(candidates) if candidates else 0.0
 

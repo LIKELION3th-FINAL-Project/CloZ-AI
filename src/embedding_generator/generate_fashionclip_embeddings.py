@@ -4,9 +4,9 @@ FashionCLIP 임베딩 생성 스크립트 (Colab GPU 전용)
 무신사 상품 이미지 & 옷장 이미지를 fashion-clip으로 임베딩
 
 사용법:
-1. Colab에서 이 파일 업로드
-2. 데이터 폴더 업로드 (musinsa_images/, closet/, musinsa_ranking_result.json)
-3. 실행
+- Colab에서 이 파일 업로드
+- 데이터 폴더 업로드 (musinsa_images/, closet/, musinsa_ranking_result.json)
+- 실행
 
 출력:
 - musinsa_embeddings.json
@@ -49,9 +49,7 @@ import chromadb
 
 
 
-# ============================================================
-# 2. FashionCLIP 모델 로드 (A100 최적화)
-# ============================================================
+# FashionCLIP 모델 로드 (A100 최적화)
 class FashionCLIPEmbedder:
     """
     FashionCLIP 임베딩 생성기 (A100 80GB 최적화)
@@ -219,9 +217,7 @@ class FashionCLIPEmbedder:
 
 
 
-# ============================================================
-# 3. 무신사 상품 임베딩 생성
-# ============================================================
+# 무신사 상품 임베딩 생성
 def generate_musinsa_embeddings(
     json_path: str,
     images_base_dir: str,
@@ -326,9 +322,7 @@ def generate_musinsa_embeddings(
 
 
 
-# ============================================================
-# 4. 옷장 이미지 임베딩 생성
-# ============================================================
+# 옷장 이미지 임베딩 생성
 def generate_wardrobe_embeddings(
     closet_dir: str,
     output_dir: str,
@@ -422,9 +416,7 @@ def generate_wardrobe_embeddings(
 
 
 
-# ============================================================
-# 5. ChromaDB에 저장
-# ============================================================
+# ChromaDB에 저장
 def save_to_chromadb(
     embeddings: List[Dict],
     collection_name: str,
@@ -468,9 +460,7 @@ def save_to_chromadb(
     print(f"ChromaDB 저장 완료: {collection_name} ({len(embeddings)}개)")
 
 
-# ============================================================
-# 6. 메인 실행
-# ============================================================
+# 메인 실행
 if __name__ == "__main__":
     """
     Colab 사용법:

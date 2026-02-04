@@ -4,10 +4,10 @@ Manager Agent
 실시간 YES/NO 피드백 처리 담당
 
 역할:
-1. 피드백 분석 → ActionType 결정
-2. BUYING 판단 시 Wardrobe Checker 연동
-3. REGENERATE 시 Generation Model 호출
-4. 세션 로그 기록
+- 피드백 분석 → ActionType 결정
+- BUYING 판단 시 Wardrobe Checker 연동
+- REGENERATE 시 Generation Model 호출
+- 세션 로그 기록
 
 LLM: gpt-4o-mini (빠른 응답, 결정론적)
 """
@@ -277,11 +277,11 @@ class ManagerAgent:
                 reasoning="Session not found"
             )
 
-        # 1. YES 피드백 → APPROVED
+        # YES 피드백 → APPROVED
         if feedback.is_positive:
             return self._handle_positive_feedback(session, feedback)
 
-        # 2. NO 피드백 → LLM 분석
+        # NO 피드백 → LLM 분석
         return self._handle_negative_feedback(session, feedback)
 
     def _handle_positive_feedback(
@@ -317,7 +317,7 @@ class ManagerAgent:
 
         return ManagerDecision(
             action=ActionType.APPROVED,
-            message="코디가 승인되었습니다! 마음에 드셨다니 기쁩니다 :)",
+            message="코디가 승인되었습니다! 마음에 드셨다니 기쁩니다",
             reasoning="User approved the outfit"
         )
 
@@ -330,10 +330,10 @@ class ManagerAgent:
         NO 피드백 처리
 
         플로우:
-        1. 재생성 횟수 체크 → 초과 시 히스토리 종합 BUYING
-        2. LLM이 피드백 명확/모호 판단
-        3. 모호하면 → ASK_MORE (추가 질문)
-        4. 명확하면 → WardrobeChecker로 옷장 확인
+        - 재생성 횟수 체크 → 초과 시 히스토리 종합 BUYING
+        - LLM이 피드백 명확/모호 판단
+        - 모호하면 → ASK_MORE (추가 질문)
+        - 명확하면 → WardrobeChecker로 옷장 확인
            - 옷장에 있음 → REGENERATE (1회만)
            - 옷장에 없음 → BUYING (상품 추천)
         """
@@ -351,13 +351,13 @@ class ManagerAgent:
         )
         session.add_entry(entry)
 
-        # 1. [수정] 재생성 횟수 체크 (먼저!)
+        # 재생성 횟수 체크 (먼저)
         regenerate_count = self._get_regenerate_count(session)
         if regenerate_count >= self.config.max_regenerate_count:
             # 히스토리 종합해서 바로 BUYING (LLM 판단 스킵)
             decision = self._create_buying_decision_with_history(session, feedback)
         else:
-            # 2. 지능형 컨텍스트 분석 (ContextAnalyzer 사용)
+            # 지능형 컨텍스트 분석 (ContextAnalyzer 사용)
             analysis = self.context_analyzer.analyze_session_context(session, feedback)
 
             if not analysis["is_clear"]:
@@ -696,7 +696,7 @@ class ManagerAgent:
         # 세션에서 대화 히스토리 추출
         entries = session.entries
 
-        # 1. 모든 피드백 수집 (순서대로)
+        # 모든 피드백 수집 (순서대로)
         feedback_list = []
         for entry in entries:
             if entry.entry_type == "feedback" and not entry.content.get("is_positive"):
@@ -708,7 +708,7 @@ class ManagerAgent:
                         "text": fb_text
                     })
 
-        # 2. 현재 피드백도 추가 (중복 방지)
+        # 현재 피드백도 추가 (중복 방지)
         current_fb = {
             "scopes": [s.value for s in (feedback.feedback_scopes or [FeedbackScope.FULL])],
             "text": feedback.feedback_text
@@ -720,11 +720,11 @@ class ManagerAgent:
             "feedback": feedback_list
         }
 
-        # 3. ASK_MORE 질문/답변 쌍만 clarifications로
+        # ASK_MORE 질문/답변 쌍만 clarifications로
         clarifications = []
         ask_more_exists = False
 
-        # 4. ASK_MORE 질문/답변 쌍 추출
+        # ASK_MORE 질문/답변 쌍 추출
         for i, entry in enumerate(entries):
             if entry.entry_type == "action" and entry.content.get("action") == "ASK_MORE":
                 ask_more_exists = True

@@ -115,7 +115,7 @@ class GeminiVisualMetadataExtractor:
 주요 색상 (택1):
 {', '.join(COLOR_OPTIONS)}
 
-어울리는 스타일 (1-3개):
+어울리는 스타일 (평균 1-3개):
 {', '.join(STYLE_OPTIONS)}
 
 반드시 JSON 형식으로만 응답:
@@ -179,9 +179,7 @@ class GeminiVisualMetadataExtractor:
             )
 
 
-# ============================================================
 # 배치 처리
-# ============================================================
 
 class BatchProcessor:
     """배치 처리 관리"""

@@ -7,11 +7,18 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 # FashionCLIP embedder import
-sys.path.append(str(Path(__file__).parent.parent.parent / "scripts"))
-from generate_fashionclip_embeddings import FashionCLIPEmbedder
+try:
+    from ...embedding_generator.generate_fashionclip_embeddings import FashionCLIPEmbedder
+except ImportError:
+    import sys
+    sys.path.append(str(Path(__file__).parent.parent.parent / "embedding_generator"))
+    from generate_fashionclip_embeddings import FashionCLIPEmbedder
 
 from ..interfaces.buying_trigger import BuyingTriggerInterface, BuyingRecommendation, ProductRecommendation
 from ..models import FeedbackScope, OutfitSet
+from ..config import get_config
+
+config = get_config()
 
 try:
     import chromadb
@@ -30,11 +37,11 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
 
     def __init__(
         self,
-        threshold: float = 0.15,  # FashionCLIP 텍스트-이미지 유사도는 보통 0.2~0.35
-        chroma_path: str = "data/chroma_db",
-        collection_name: str = "musinsa",
-        metadata_path: str = "data/musinsa_ranking_result.json",
-        visual_metadata_path: str = "data/visual_metadata_checkpoint.json",
+        threshold: float = None,
+        chroma_path: str = None,
+        collection_name: str = None,
+        metadata_path: str = None,
+        visual_metadata_path: str = None,
         device: str = None
     ):
         """
@@ -48,9 +55,11 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             visual_metadata_path: 시각적 메타데이터 JSON 경로 (color, style_tags)
             device: FashionCLIP 디바이스 ("cuda", "mps", or "cpu")
         """
-        self.threshold = threshold
-        self.metadata_path = metadata_path
-        self.visual_metadata_path = visual_metadata_path
+        self.threshold = threshold or config['embedding'].MUSINSA_THRESHOLD
+        self.metadata_path = metadata_path or str(config['paths'].MUSINSA_METADATA_PATH)
+        self.visual_metadata_path = visual_metadata_path or str(config['paths'].VISUAL_METADATA_PATH)
+        chroma_path = chroma_path or str(config['paths'].CHROMA_PATH)
+        collection_name = collection_name or config['embedding'].MUSINSA_COLLECTION
         self._metadata_cache: Dict[str, Dict] = {}  # 메타데이터 캐시
         self._visual_metadata_cache: Dict[str, Dict] = {}  # 시각적 메타데이터 캐시
 
@@ -159,7 +168,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # 1. 검색 쿼리 결정 (영어 우선)
+        # 검색 쿼리 결정 (영어 우선)
         search_query = feedback_text
         avoid_colors = []
         prefer_styles = []
@@ -189,7 +198,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     avoid_colors.extend(avoid_attrs.get('colors', []))
                     # 스타일도 회피 가능
 
-        # 2. FashionCLIP으로 쿼리 임베딩 생성
+        # FashionCLIP으로 쿼리 임베딩 생성
         try:
             query_embedding = self.embedder.embed_text(search_query)
         except Exception as e:
@@ -200,7 +209,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # 3. ChromaDB 유사도 검색
+        # ChromaDB 유사도 검색
         try:
             # 카테고리 필터링 (있으면)
             where_filter = None
@@ -220,7 +229,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # 4. Threshold 필터링 및 상품 정보 구성
+        # Threshold 필터링 및 상품 정보 구성
         candidates = []
         all_similarities = []
 
@@ -266,7 +275,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             if all_similarities:
                 print(f"  [DEBUG] 무신사 검색 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
 
-        # 5. 최종 점수 기준 정렬 및 상위 N개 선택
+        # 최종 점수 기준 정렬 및 상위 N개 선택
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
         products = []
@@ -282,7 +291,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             if product:
                 products.append(product)
 
-        # 5. 결과 반환
+        # 결과 반환
         success = len(products) > 0
         reasoning = f"'{search_query}' 검색 완료: {len(products)}개 상품 추천 (threshold={self.threshold})"
 

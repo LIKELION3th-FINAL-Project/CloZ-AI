@@ -1,8 +1,7 @@
-note.*
-.ruff_cache
+fashion_venv_312/
+fashion_engine_venv/
+venv/
 __pycache__/
-.pytest_cache
-*.egg-info
-*.json
-*.yaml
-*.env
+*.db
+logs/
+*.log

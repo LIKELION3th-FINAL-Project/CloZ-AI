@@ -5,7 +5,6 @@ import os
 @dataclass
 class FashionConfig:
     """시스템 환경 설정 및 로컬 경로 관리 클래스"""
-    #경로에 따라 수정 필요
     
     # 상위 경로 설정 (D:\final_pj\test)
     root_path: str = "D:/final_pj/test"

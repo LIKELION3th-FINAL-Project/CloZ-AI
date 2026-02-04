@@ -20,7 +20,7 @@ class FashionRecommender:
 
     def load_user_wardrobe(self, collection_name="mycloset-embedding"):
         """ChromaDB 캐시를 활용하여 옷장 아이템 로드"""
-        # 내부 DB 명칭 매핑
+        # [수정] 실제 폴더명(스크린샷 기준) -> 내부 카테고리 한글 명칭
         folder_map = {
             "tops": "상의",
             "bottoms": "하의",

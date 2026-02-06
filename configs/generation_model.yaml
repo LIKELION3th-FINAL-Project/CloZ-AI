@@ -1,0 +1,17 @@
+# 1. 사용자 옷장 데이터 이미지 폴더 (yj_closet)
+base_dir: "D:/final_pj/test/yj_closet"
+
+# 2. SQLite DB 경로 (root_path 아래 생성)
+db_path: "D:/final_pj/test/fashion_items.db"
+
+# 3. 레퍼런스 스타일 임베딩 DB (chromadb-reference-embeddings)
+chromadb_ref_dir: "D:/final_pj/test/chromadb-reference-embeddings/chromadb"
+
+# 4. 사용자 옷장 임베딩 캐시 DB (chromadb_mycloset-embeddings)
+chromadb_war_dir: "D:/final_pj/test/chromadb_mycloset-embeddings/chromadb"
+
+model_name: "patrickjohncyh/fashion-clip"
+model_img_path: "D:/final_pj/test/model.webp"
+
+# 실행 환경 설정
+use_fp16: True

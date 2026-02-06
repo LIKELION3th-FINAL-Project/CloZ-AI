@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 import os
 from typing import Dict, List, Tuple
+from loguru import logger
 from .encoder import CLIPEncoder
 
 class OutfitPlanner:
@@ -19,14 +20,14 @@ class OutfitPlanner:
         shirts = recommendations.get("shirt", [])[:top_n]
         
         if not (pants and outers and shirts): 
-            print("[WARN] 조합 생성에 필요한 카테고리가 부족합니다.")
+            logger.warning("조합 생성에 필요한 카테고리가 부족합니다.")
             return []
         
         combinations = list(itertools.product(pants, outers, shirts))
-        print(f"총 {len(combinations)}개의 조합이 생성되었습니다.")
-        print(f"- pant: {len(pants)}개")
-        print(f"- outer: {len(outers)}개")
-        print(f"- shirt: {len(shirts)}개")
+        logger.info(f"총 {len(combinations)}개의 조합이 생성되었습니다.")
+        logger.info(f"- pant: {len(pants)}개")
+        logger.info(f"- outer: {len(outers)}개")
+        logger.info(f"- shirt: {len(shirts)}개")
         
         return combinations
 
@@ -34,19 +35,19 @@ class OutfitPlanner:
                         target_style: str, query_embedding: torch.Tensor, overall_weight: float = 0.7) -> List[Dict]:
         """조합된 세트의 전체 조화도 및 스타일 부합도 평가 (가중치 파라미터 추가)"""
         target_style = unicodedata.normalize("NFC", target_style)
-        if target_style not in style_profiles: 
-            print(f"[WARN] 타겟 스타일 '{target_style}'이 프로필에 없습니다.")
+        if target_style not in style_profiles:
+            logger.warning(f"타겟 스타일 '{target_style}'이 프로필에 없습니다.")
             return []
         
         # 스타일 레퍼런스 정규화
         style_embs = F.normalize(style_profiles[target_style].to(torch.float32), dim=-1)
         results = []
         
-        print(f"총 {len(combinations)}개 조합 평가 중...")
+        logger.info(f"총 {len(combinations)}개 조합 평가 중...")
         
         for i, combo in enumerate(combinations):
             if (i + 1) % 5 == 0:
-                print(f"  진행: {i + 1}/{len(combinations)}")
+                logger.info(f"  진행: {i + 1}/{len(combinations)}")
             
             # 3장 평균 임베딩 (전체 조화)
             embs = torch.stack([item['embedding'] for item in combo]).to(torch.float32)
@@ -78,14 +79,14 @@ class OutfitPlanner:
         results.sort(key=lambda x: x['final_score'], reverse=True)
         
         # 상위 결과 출력
-        print(f"\n평가 완료! 상위 3개 조합:")
+        logger.info(f"\n평가 완료! 상위 3개 조합:")
         for rank, result in enumerate(results[:3], 1):
-            print(f"\n{rank}위 (조합 #{result['combination_idx'] + 1}):")
-            print(f"  최종 점수: {result['final_score']:.4f}")
-            print(f"  전체 조화 유사도: {result['harmony_score']:.4f}")
-            print(f"  개별 평균 유사도: {result['individual_avg']:.4f}")
-            print(f"  - pant: {result['pant']}")
-            print(f"  - outer: {result['outer']}")
-            print(f"  - shirt: {result['shirt']}")
+            logger.info(f"\n{rank}위 (조합 #{result['combination_idx'] + 1}):")
+            logger.info(f"  최종 점수: {result['final_score']:.4f}")
+            logger.info(f"  전체 조화 유사도: {result['harmony_score']:.4f}")
+            logger.info(f"  개별 평균 유사도: {result['individual_avg']:.4f}")
+            logger.info(f"  - pant: {result['pant']}")
+            logger.info(f"  - outer: {result['outer']}")
+            logger.info(f"  - shirt: {result['shirt']}")
         
         return results

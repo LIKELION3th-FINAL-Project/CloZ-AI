@@ -7,46 +7,51 @@ import os
 import chromadb
 from collections import defaultdict
 from typing import Dict, List, Optional
-from .config import FashionConfig
 from .encoder import CLIPEncoder
+from utils.load import load_config
+from loguru import logger
+from pathlib import Path
 
 class FashionRecommender:
     """고도화된 멀티 팩터 추천 엔진 (멀티 스타일, 색상, 계절, 무드 반영)"""
-    def __init__(self, config: FashionConfig, encoder: CLIPEncoder):
-        self.config = config
+    def __init__(self, encoder: CLIPEncoder):
+        self.config_path = Path(__file__).resolve().parents[1] / "configs" / "generation_model.yaml"
+        self.config = load_config(self.config_path)
+        self.folder_map = self.config["folder_map"]
+        self.cat_to_db = self.config["cat_to_db"]
         self.encoder = encoder
         self.item_db = {} 
         self.style_profiles = {}
 
     def load_user_wardrobe(self, collection_name="mycloset-embedding"):
         """ChromaDB 캐시를 활용하여 옷장 아이템 로드 (로컬 폴더 tops/bottoms/outers 대응)"""
-        folder_map = {"tops": "상의", "bottoms": "하의", "outers": "아우터", "상의": "상의", "하의": "하의", "아우터": "아우터"}
-        cat_to_db = {"상의": "shirt", "하의": "pant", "아우터": "outer"}
-
         try:
             client = chromadb.PersistentClient(path=self.config.chromadb_war_dir)
             col = client.get_or_create_collection(name=collection_name)
         except Exception as e:
-            print(f"[Error] ChromaDB 로드 실패: {e}")
+            logger.error(f"ChromaDB 로드 실패: {e}")
             return {}
 
         self.item_db = {}
         loaded_from = 0
         new_encoded = 0
 
-        if not os.path.exists(self.config.base_dir): return {}
+        if not os.path.exists(self.config.base_dir): 
+            return {}
         actual_dirs = os.listdir(self.config.base_dir)
 
         for folder_name in actual_dirs:
             norm_folder = folder_name.lower()
-            if norm_folder not in folder_map: continue
+            if norm_folder not in self.folder_map: 
+                continue
 
-            kor_cat = folder_map[norm_folder]
-            db_prefix = cat_to_db[kor_cat]
+            kor_cat = self.folder_map[norm_folder]
+            db_prefix = self.cat_to_db[kor_cat]
             path = os.path.join(self.config.base_dir, folder_name)
 
             for f in os.listdir(path):
-                if not f.lower().endswith((".jpg", ".png", ".jpeg", ".webp")): continue
+                if not f.lower().endswith((".jpg", ".png", ".jpeg", ".webp")): 
+                    continue
                 full_path = os.path.join(path, f)
                 db_id = f"{db_prefix}/{f}"
                 chroma_id = f"item:{db_id}"
@@ -93,7 +98,6 @@ class FashionRecommender:
         except Exception as e: print(f"스타일 로드 실패: {e}")
 
     # ========== 신규 헬퍼 함수들 (고도화 로직) ==========
-
     def _build_context_text(self, agent_json: Dict) -> str:
         """JSON 데이터에서 문맥 텍스트 생성"""
         parts = []
@@ -142,8 +146,10 @@ class FashionRecommender:
 
     def _calculate_confidence_weight(self, agent_json: Dict) -> float:
         """분석 결과의 신뢰도를 점수에 반영"""
-        confs = [agent_json[f]["confidence"] for f in ["style", "color", "mood", "location", "season", "size_fit"] 
-                 if f in agent_json and "confidence" in agent_json[f]]
+        confs = [
+                    agent_json[f]["confidence"] for f in ["style", "color", "mood", "location", "season", "size_fit"] 
+                    if f in agent_json and "confidence" in agent_json[f]
+                    ]
         return 0.5 + (np.mean(confs) * 0.5) if confs else 0.7
 
     # ========== 메인 추천 함수 (고도화 버전) ==========

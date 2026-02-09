@@ -16,3 +16,4 @@ src/fashn_vton/tests/
 src/fashn_vton/LICENSE
 src/fashn_vton/pyproject.toml
 src/fashn_vton/README.md
+src/fashn_vton/weights/

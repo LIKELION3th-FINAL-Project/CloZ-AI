@@ -2,14 +2,16 @@ from PIL import Image
 from typing import Optional, Dict, Tuple
 from loguru import logger
 from fashn_vton import TryOnPipeline
+from pathlib import Path
 import os
 
 class VTONManager:
     """가상 피팅(Virtual Try-On) 실행 및 이미지 생성 클래스"""
-    def __init__(self, weights_dir: str = "./weights"):
+    def __init__(self):
         self.pipeline = None
+        self.vton_weights_dir = Path(__file__).parents[1] / "fashn_vton" / "weights"
         try:
-            self.pipeline = TryOnPipeline(weights_dir = weights_dir)
+            self.pipeline = TryOnPipeline(weights_dir = self.vton_weights_dir)
             logger.info("✅ Fashion-VTON 파이프라인 로드 완료! (가중치는 재사용됩니다)")
         except ImportError:
             logger.warning("fashn_vton 모듈을 찾을 수 없습니다.")

@@ -7,12 +7,12 @@ __pycache__/
 *.env
 
 # fashon-vton 오픈소스 ignore
-src/fashn-vton/.git
-src/fashn-vton/.gitignore
-src/fashn-vton/examples/
-src/fashn-vton/scripts/
-src/fashn-vton/src/
-src/fashn-vton/tests/
-src/fashn-vton/LICENSE
-src/fashn-vton/pyproject.toml
-src/fashn-vton/README.md
+src/fashn_vton/.git
+src/fashn_vton/.gitignore
+src/fashn_vton/examples/
+src/fashn_vton/scripts/
+src/fashn_vton/src/
+src/fashn_vton/tests/
+src/fashn_vton/LICENSE
+src/fashn_vton/pyproject.toml
+src/fashn_vton/README.md

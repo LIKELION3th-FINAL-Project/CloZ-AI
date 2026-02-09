@@ -15,7 +15,7 @@ from pathlib import Path
 class FashionRecommender:
     """고도화된 멀티 팩터 추천 엔진 (멀티 스타일, 색상, 계절, 무드 반영)"""
     def __init__(self, encoder: CLIPEncoder):
-        self.config_path = Path(__file__).resolve().parents[1] / "configs" / "generation_model.yaml"
+        self.config_path = Path(__file__).resolve().parents[2] / "configs" / "generation_model.yaml"
         self.config = load_config(self.config_path)
         self.folder_map = self.config["folder_map"]
         self.cat_to_db = self.config["cat_to_db"]

@@ -4,10 +4,10 @@ Manager Agent
 실시간 YES/NO 피드백 처리 담당
 
 역할:
-- 피드백 분석 → ActionType 결정
-- BUYING 판단 시 Wardrobe Checker 연동
-- REGENERATE 시 Generation Model 호출
-- 세션 로그 기록
+1. 피드백 분석 → ActionType 결정
+2. BUYING 판단 시 Wardrobe Checker 연동
+3. REGENERATE 시 Generation Model 호출
+4. 세션 로그 기록
 
 LLM: gpt-4o-mini (빠른 응답, 결정론적)
 """
@@ -65,12 +65,28 @@ class ManagerConfig:
 
 class ManagerAgent:
     """
+    피드백 처리 오케스트레이터.
+
+    사용 흐름:
+        1. start_session(user_id, original_prompt, initial_outfit) - 세션 시작
+        2. process_feedback(FeedbackInput) - YES/NO 피드백 처리
+           -> APPROVED: 코디 승인, 세션 종료
+           -> ASK_MORE: 추가 질문 후 재피드백
+           -> REGENERATE: 옷장에서 대안 검색 (최대 1회)
+           -> BUYING: 외부 상품 추천
+        3. end_session(session_id) - 세션 종료
+
+    앞단(Generation) 연결:
+        - 입력: OutfitSet (adapters/main_adapter.convert_outfit_to_outfitset()으로 변환)
+        - 출력: ManagerDecision (action, message, buying_recommendations 등)
+        - REGENERATE 시 재생성 쿼리: decision.payload['regenerate_data']['structured_query']
+
+    사용 예시:
         session = manager.start_session(
             user_id="user_123",
             original_prompt="오피스룩 추천해줘"
         )
 
-        # 피드백 처리
         decision = manager.process_feedback(
             feedback=FeedbackInput(
                 session_id=session.session_id,
@@ -82,12 +98,9 @@ class ManagerAgent:
             )
         )
 
-        # 결정에 따른 처리
         if decision.action == ActionType.APPROVED:
-            # 승인됨 → 세션 종료
             manager.end_session(session.session_id)
         elif decision.action == ActionType.BUYING:
-            # 구매 추천 표시
             print(decision.buying_recommendations)
     """
 
@@ -277,11 +290,11 @@ class ManagerAgent:
                 reasoning="Session not found"
             )
 
-        # YES 피드백 → APPROVED
+        # 1. YES 피드백 → APPROVED
         if feedback.is_positive:
             return self._handle_positive_feedback(session, feedback)
 
-        # NO 피드백 → LLM 분석
+        # 2. NO 피드백 → LLM 분석
         return self._handle_negative_feedback(session, feedback)
 
     def _handle_positive_feedback(
@@ -317,7 +330,7 @@ class ManagerAgent:
 
         return ManagerDecision(
             action=ActionType.APPROVED,
-            message="코디가 승인되었습니다! 마음에 드셨다니 기쁩니다",
+            message="코디가 승인되었습니다.",
             reasoning="User approved the outfit"
         )
 
@@ -330,10 +343,10 @@ class ManagerAgent:
         NO 피드백 처리
 
         플로우:
-        - 재생성 횟수 체크 → 초과 시 히스토리 종합 BUYING
-        - LLM이 피드백 명확/모호 판단
-        - 모호하면 → ASK_MORE (추가 질문)
-        - 명확하면 → WardrobeChecker로 옷장 확인
+        1. 재생성 횟수 체크 → 초과 시 히스토리 종합 BUYING
+        2. LLM이 피드백 명확/모호 판단
+        3. 모호하면 → ASK_MORE (추가 질문)
+        4. 명확하면 → WardrobeChecker로 옷장 확인
            - 옷장에 있음 → REGENERATE (1회만)
            - 옷장에 없음 → BUYING (상품 추천)
         """
@@ -351,13 +364,13 @@ class ManagerAgent:
         )
         session.add_entry(entry)
 
-        # 재생성 횟수 체크 (먼저)
+        # 1. [수정] 재생성 횟수 체크 (먼저!)
         regenerate_count = self._get_regenerate_count(session)
         if regenerate_count >= self.config.max_regenerate_count:
             # 히스토리 종합해서 바로 BUYING (LLM 판단 스킵)
             decision = self._create_buying_decision_with_history(session, feedback)
         else:
-            # 지능형 컨텍스트 분석 (ContextAnalyzer 사용)
+            # 2. 지능형 컨텍스트 분석 (ContextAnalyzer 사용)
             analysis = self.context_analyzer.analyze_session_context(session, feedback)
 
             if not analysis["is_clear"]:
@@ -514,6 +527,11 @@ class ManagerAgent:
             if structured_info and hasattr(structured_info, 'requirements_en') and structured_info.requirements_en:
                 search_requirements = structured_info.requirements_en
 
+            # 세부카테고리 필터 (있으면)
+            target_detail_cats = None
+            if structured_info and hasattr(structured_info, 'target_detail_cats') and structured_info.target_detail_cats:
+                target_detail_cats = structured_info.target_detail_cats
+
             # 정제된 쿼리로 옷장 검색
             check_result = self.wardrobe_checker.can_fulfill(
                 requirements=search_requirements,
@@ -523,7 +541,8 @@ class ManagerAgent:
                     "refined_query": structured_info.to_dict() if structured_info else {},  # 구조화된 정보 전달
                     "constraints": constraints,
                     "avoid_attributes": avoid_attributes
-                }
+                },
+                target_detail_cats=target_detail_cats
             )
 
             if check_result.is_possible:
@@ -696,7 +715,7 @@ class ManagerAgent:
         # 세션에서 대화 히스토리 추출
         entries = session.entries
 
-        # 모든 피드백 수집 (순서대로)
+        # 1. 모든 피드백 수집 (순서대로)
         feedback_list = []
         for entry in entries:
             if entry.entry_type == "feedback" and not entry.content.get("is_positive"):
@@ -708,7 +727,7 @@ class ManagerAgent:
                         "text": fb_text
                     })
 
-        # 현재 피드백도 추가 (중복 방지)
+        # 2. 현재 피드백도 추가 (중복 방지)
         current_fb = {
             "scopes": [s.value for s in (feedback.feedback_scopes or [FeedbackScope.FULL])],
             "text": feedback.feedback_text
@@ -720,11 +739,11 @@ class ManagerAgent:
             "feedback": feedback_list
         }
 
-        # ASK_MORE 질문/답변 쌍만 clarifications로
+        # 3. ASK_MORE 질문/답변 쌍만 clarifications로
         clarifications = []
         ask_more_exists = False
 
-        # ASK_MORE 질문/답변 쌍 추출
+        # 4. ASK_MORE 질문/답변 쌍 추출
         for i, entry in enumerate(entries):
             if entry.entry_type == "action" and entry.content.get("action") == "ASK_MORE":
                 ask_more_exists = True
@@ -765,7 +784,6 @@ class ManagerAgent:
         히스토리 기반 BUYING 결정 - 모든 피드백 종합
 
         재생성 횟수 초과 시 이전 피드백들을 모아서 추천에 활용
-        QueryBuilder로 구조화된 쿼리를 생성하여 필터링 정확도 향상
         """
         # 세션에서 모든 피드백 텍스트 수집
         all_feedbacks = []
@@ -782,19 +800,20 @@ class ManagerAgent:
         # 종합 피드백으로 추천 요청
         combined_feedback = " / ".join(all_feedbacks)
 
+        # QueryBuilder로 구조화된 정보 추출 (세부카테고리, 밝기 선호 등)
+        structured_info = None
+        context = {}
+        try:
+            structured_info = self.query_builder.refine_original_query(combined_feedback)
+            if structured_info:
+                context["structured_query"] = structured_info.to_dict()
+        except Exception as e:
+            print(f"[경고] QueryBuilder 실패: {e}")
+
         buying_result = None
         if self.config.enable_buying_recommendation:
             # 복수 scope 중 첫 번째 사용
             primary_scope = feedback.feedback_scopes[0] if feedback.feedback_scopes else FeedbackScope.FULL
-
-            # QueryBuilder로 구조화된 쿼리 생성 (target_detail_cats, prefer_brightness 등)
-            context = {}
-            try:
-                structured_info = self.query_builder.refine_original_query(combined_feedback)
-                if structured_info:
-                    context["structured_query"] = structured_info.to_dict()
-            except Exception as e:
-                print(f"[ManagerAgent] QueryBuilder 오류 (무시): {e}")
 
             buying_result = self.buying_trigger.recommend(
                 original_prompt=session.context.get("original_prompt", ""),
@@ -802,7 +821,7 @@ class ManagerAgent:
                 feedback_scope=primary_scope,
                 current_outfit=feedback.current_outfit,
                 limit=5,
-                context=context  # 구조화된 쿼리 정보 전달
+                context=context  # 구조화된 정보 전달
             )
 
         return ManagerDecision(

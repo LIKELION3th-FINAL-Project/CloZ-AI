@@ -31,7 +31,7 @@ class ProductRecommendation:
         match_score: 매칭 점수 (0.0 ~ 1.0)
         match_reason: 추천 이유
     """
-    product_id: int
+    product_id: str
     product_name: str
     brand: str
     price: int
@@ -212,7 +212,7 @@ class DummyBuyingTrigger(BuyingTriggerInterface):
         sample_products = {
             "상의": [
                 ProductRecommendation(
-                    product_id=1001,
+                    product_id="dummy:1001",
                     product_name="[무신사] 오버핏 코튼 셔츠",
                     brand="무탠다드",
                     price=39000,
@@ -223,7 +223,7 @@ class DummyBuyingTrigger(BuyingTriggerInterface):
                     match_reason="밝은 색상, 캐주얼 핏"
                 ),
                 ProductRecommendation(
-                    product_id=1002,
+                    product_id="dummy:1002",
                     product_name="[무신사] 라운드넥 니트",
                     brand="커버낫",
                     price=49000,
@@ -235,7 +235,7 @@ class DummyBuyingTrigger(BuyingTriggerInterface):
             ],
             "바지": [
                 ProductRecommendation(
-                    product_id=2001,
+                    product_id="dummy:2001",
                     product_name="[무신사] 와이드 데님 팬츠",
                     brand="리바이스",
                     price=89000,
@@ -248,7 +248,7 @@ class DummyBuyingTrigger(BuyingTriggerInterface):
             ],
             "아우터": [
                 ProductRecommendation(
-                    product_id=3001,
+                    product_id="dummy:3001",
                     product_name="[무신사] 울 블렌드 코트",
                     brand="무탠다드",
                     price=159000,

@@ -29,7 +29,7 @@ class RefinedQuery:
     requirements: List[str] = field(default_factory=list)  # 요구사항: ["상의는 밝은 색", "바지는 편한 핏"]
     requirements_en: List[str] = field(default_factory=list)  # 영어 요구사항 (FashionCLIP용): ["bright colored top", "comfortable fit pants"]
     constraints: List[str] = field(default_factory=list)   # 제한사항: ["검은색 제외", "타이트한 옷 제외"]
-    target_detail_cats: List[str] = field(default_factory=list)  # 타겟 세부카테고리: ["니트/스웨트", "후드 티셔츠"]
+    target_detail_cats: List[str] = field(default_factory=list)  # 타겟 세부카테고리: ["Knitwear", "Sweatshirt"]
     prefer_brightness: Optional[str] = None                 # 색상 밝기 선호: "light" or "dark"
     original_text: str = ""                                 # 원본 텍스트
 
@@ -333,10 +333,10 @@ class QueryBuilder:
 
 7. **target_detail_cats**: 요청에서 언급된 의류 세부 카테고리 (배열)
    - 반드시 아래 목록에서만 선택 (없으면 빈 배열):
-   - 상의: "니트/스웨트", "맨투맨/스웨트", "반소매 티셔츠", "셔츠/블라우스", "후드 티셔츠"
-   - 하의: "데님 팬츠", "슈트 팬츠/슬랙스", "코튼 팬츠", "트레이닝/조거 팬츠"
-   - 아우터: "경량 패딩/패딩 베스트", "숏패딩/헤비 아우터", "카디건", "코트", "후드 집업"
-   - 예: 사용자가 "니트로 바꿔줘"라고 하면 ["니트/스웨트"]
+   - 상의: "Tee", "Shirt", "Sweatshirt", "Knitwear"
+   - 하의: "Denim", "Chino", "Trousers", "Easy_pants", "Work_pants", "Short"
+   - 아우터: "Jacket_Blouson", "Coat", "Cardigan", "Jumper_Parka", "Padding", "Leather", "Vest"
+   - 예: 사용자가 "니트로 바꿔줘"라고 하면 ["Knitwear"]
 
 8. **prefer_brightness**: 색상 밝기 선호 (문자열 또는 null)
    - "light": 밝은색 선호 (밝은, 화사한, 연한, 파스텔 등)
@@ -393,7 +393,7 @@ class QueryBuilder:
   "requirements": ["밝은 색 니트로 변경"],
   "requirements_en": ["bright colored knit sweater"],
   "constraints": [],
-  "target_detail_cats": ["니트/스웨트"],
+  "target_detail_cats": ["Knitwear"],
   "prefer_brightness": "light"
 }}
 
@@ -406,7 +406,7 @@ class QueryBuilder:
   "requirements": ["니트로 변경"],
   "requirements_en": ["knit sweater"],
   "constraints": [],
-  "target_detail_cats": ["니트/스웨트"],
+  "target_detail_cats": ["Knitwear"],
   "prefer_brightness": null
 }}
 
@@ -417,9 +417,9 @@ class QueryBuilder:
   "time": null,
   "location": null,
   "requirements": ["상의를 후드티로 변경"],
-  "requirements_en": ["hoodie top"],
+  "requirements_en": ["hoodie sweatshirt"],
   "constraints": [],
-  "target_detail_cats": ["후드 티셔츠"],
+  "target_detail_cats": ["Sweatshirt"],
   "prefer_brightness": null
 }}
 
@@ -659,11 +659,11 @@ class QueryBuilder:
 </examples>
 
 <quality_check>
-  ✓ JSON 형식 준수
-  ✓ combined_query 길이: 15-50자
-  ✓ 부정 표현 → 긍정 전환
-  ✓ 불필요한 수식어 제거
-  ✓ reasoning에 적용 규칙 명시
+  - JSON 형식 준수
+  - combined_query 길이: 15-50자
+  - 부정 표현 -> 긍정 전환
+  - 불필요한 수식어 제거
+  - reasoning에 적용 규칙 명시
 </quality_check>
 
 위 규칙과 예시를 참고하여 JSON만 반환하세요."""

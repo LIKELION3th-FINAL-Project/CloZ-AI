@@ -6,19 +6,10 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 # FashionCLIP embedder import
-# src/embedding_generator/generate_fashionclip_embeddings.py 에서 가져옴
-try:
-    from ...embedding_generator.generate_fashionclip_embeddings import FashionCLIPEmbedder
-except ImportError:
-    # 패키지 구조가 다를 경우를 대비한 fallback
-    import sys
-    sys.path.append(str(Path(__file__).parent.parent.parent / "embedding_generator"))
-    from generate_fashionclip_embeddings import FashionCLIPEmbedder
+sys.path.append(str(Path(__file__).parent.parent.parent / "embedding_generator"))
+from generate_fashionclip_embeddings import FashionCLIPEmbedder
 
 from ..interfaces.wardrobe_checker import WardrobeCheckerInterface, WardrobeCheckResult
-from ..config import get_config
-
-config = get_config()
 
 try:
     import chromadb
@@ -38,10 +29,11 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
 
     def __init__(
         self,
-        threshold: float = None,
-        chroma_path: str = None,
-        collection_name: str = None,
-        device: str = None
+        threshold: float = 0.2,  # FashionCLIP 텍스트-이미지 유사도는 보통 0.2~0.35
+        chroma_path: str = "data/chroma_wardrobe",
+        collection_name: str = "wardrobe",
+        device: str = None,
+        embedder: Optional[FashionCLIPEmbedder] = None
     ):
         """
         초기화
@@ -52,9 +44,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             collection_name: 옷장 컬렉션 이름
             device: FashionCLIP 디바이스 ("cuda", "mps", or "cpu")
         """
-        self.threshold = threshold or config['embedding'].WARDROBE_THRESHOLD
-        chroma_path = chroma_path or str(config['paths'].CHROMA_PATH)
-        collection_name = collection_name or config['embedding'].WARDROBE_COLLECTION
+        self.threshold = threshold
 
         if not CHROMADB_AVAILABLE:
             print("[경고] chromadb가 설치되지 않음. Dummy 모드로 동작")
@@ -73,18 +63,23 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             self.embedder = None
             return
 
-        # FashionCLIP 모델 로드
-        try:
-            self.embedder = FashionCLIPEmbedder(device=device, use_fp16=False)  # CPU에서는 FP16 비활성화
-        except Exception as e:
-            print(f"[경고] FashionCLIP 로드 실패: {e}")
-            self.embedder = None
+        # FashionCLIP 모델 로드 (주입된 것이 없으면 생성)
+        if embedder:
+            self.embedder = embedder
+        else:
+            try:
+                self.embedder = FashionCLIPEmbedder(device=device, use_fp16=False)  # CPU에서는 FP16 비활성화
+            except Exception as e:
+                print(f"[경고] FashionCLIP 로드 실패: {e}")
+                self.embedder = None
 
     def can_fulfill(
         self,
         requirements: List[str],
         user_id: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        target_categories: Optional[List[str]] = None,
+        target_detail_cats: Optional[List[str]] = None
     ) -> WardrobeCheckResult:
         """
         옷장에서 요구사항을 충족하는 재생성 후보 찾기
@@ -93,9 +88,8 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             requirements: QueryBuilder에서 정제된 쿼리 리스트
             user_id: 사용자 ID
             context: 추가 컨텍스트 (previous_items 등)
-
-        Returns:
-            WardrobeCheckResult(is_possible, matching_items, confidence)
+            target_categories: 필터링할 대카테고리 리스트 (예: ['tops', 'bottoms'])
+            target_detail_cats: 필터링할 세부카테고리 리스트 (예: ['Knitwear', 'Sweatshirt'])
         """
         # Fallback: ChromaDB 또는 embedder 없으면 더미 동작
         if not self.wardrobe_collection or not self.embedder:
@@ -106,10 +100,10 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.5
             )
 
-        # 쿼리 텍스트 결합
+        # 1. 쿼리 텍스트 결합
         query_text = " ".join(requirements) if requirements else "casual outfit"
 
-        # FashionCLIP으로 쿼리 임베딩 생성
+        # 2. FashionCLIP으로 쿼리 임베딩 생성
         try:
             query_embedding = self.embedder.embed_text(query_text)
         except Exception as e:
@@ -120,12 +114,40 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.0
             )
 
-        # ChromaDB 유사도 검색
+        # 3. ChromaDB 유사도 검색
         try:
+            # 필터링 구성
+            where_filter = None
+            filters = []
+
+            # user_id 필터 (필수)
+            if user_id:
+                filters.append({"user_id": user_id})
+
+            # broad_cat 필터 (대분류)
+            if target_categories:
+                if len(target_categories) == 1:
+                    filters.append({"broad_cat": target_categories[0]})
+                else:
+                    filters.append({"$or": [{"broad_cat": cat} for cat in target_categories]})
+
+            # detail_cat 필터 (세부분류) - 있으면 추가
+            if target_detail_cats:
+                if len(target_detail_cats) == 1:
+                    filters.append({"detail_cat": target_detail_cats[0]})
+                else:
+                    filters.append({"$or": [{"detail_cat": cat} for cat in target_detail_cats]})
+
+            # 필터 결합
+            if len(filters) == 1:
+                where_filter = filters[0]
+            elif len(filters) > 1:
+                where_filter = {"$and": filters}
+
             results = self.wardrobe_collection.query(
                 query_embeddings=[query_embedding],
                 n_results=20,  # 충분한 후보 가져오기
-                # where={"user_id": user_id}  # 메타데이터에 user_id 있을 경우
+                where=where_filter
             )
         except Exception as e:
             return WardrobeCheckResult(
@@ -135,11 +157,25 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.0
             )
 
-        # Threshold 필터링 (유사도 >= threshold)
+        # 4. 소수 아이템 바이패스 또는 Threshold 필터링
         candidates = []
         all_similarities = []  # 디버깅용
+        total_results = len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0
 
-        if results['ids'] and results['ids'][0] and results['distances'] and results['distances'][0]:
+        # 세부카테고리 필터 적용 시, 결과가 3개 이하면 임베딩 비교 없이 전부 반환
+        # (사용자 옷장에 해당 카테고리 옷이 적으면 선택지를 제한하지 않음)
+        bypass_threshold = target_detail_cats and total_results <= 3
+
+        if bypass_threshold and total_results > 0:
+            print(f"  [INFO] 세부카테고리 결과 {total_results}개 (<=3) → 임베딩 비교 생략, 전부 반환")
+            for i in range(total_results):
+                similarity = 1 - results['distances'][0][i]
+                candidates.append({
+                    'id': results['ids'][0][i],
+                    'similarity': similarity,
+                    'metadata': results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
+                })
+        elif results['ids'] and results['ids'][0] and results['distances'] and results['distances'][0]:
             for i, distance in enumerate(results['distances'][0]):
                 # ChromaDB cosine distance: 1 - cosine_similarity
                 # 따라서 similarity = 1 - distance
@@ -158,7 +194,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             if all_similarities:
                 print(f"  [DEBUG] 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
 
-        # 이전 추천 아이템 필터링 (중복 제거)
+        # 5. 이전 추천 아이템 필터링 (중복 제거)
         previous_items = []
         if context and 'previous_items' in context:
             previous_items = context['previous_items']
@@ -166,14 +202,17 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         if previous_items and candidates:
             candidates = self._filter_previous_items(candidates, previous_items)
 
-        # 결과 반환
+        # 6. 결과 반환
         is_possible = len(candidates) > 0
         confidence = sum(c['similarity'] for c in candidates) / len(candidates) if candidates else 0.0
 
         # matching_items는 아이템 ID 문자열 리스트로 반환
         matching_items_ids = [c['id'] for c in candidates]
 
-        reason = f"검색 완료: {len(candidates)}개 후보 (threshold={self.threshold})"
+        if bypass_threshold:
+            reason = f"검색 완료: {len(candidates)}개 후보 (세부카테고리 {total_results}개 이하 → 전부 반환)"
+        else:
+            reason = f"검색 완료: {len(candidates)}개 후보 (threshold={self.threshold})"
         if previous_items:
             reason += f", 이전 {len(previous_items)}개 제외"
 

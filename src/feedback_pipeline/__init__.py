@@ -4,7 +4,7 @@ AI Fashion Coordinator - Feedback System
 Manager Agent + Analyst Agent 기반 피드백 루프 및 개인화 시스템
 
 사용 예시:
-    from feedback_system import (
+    from feedback_pipeline import (
         # Models
         FeedbackInput, FeedbackScope, OutfitSet, ItemInfo,
         UserProfile, UserBias,

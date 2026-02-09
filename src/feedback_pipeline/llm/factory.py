@@ -58,14 +58,14 @@ class LLMFactory:
             # TODO: Anthropic 구현 필요 시 추가
             raise NotImplementedError(
                 "Anthropic LLM은 아직 구현되지 않았습니다. "
-                "필요 시 feedback_system/llm/anthropic_llm.py를 구현하세요."
+                "필요 시 feedback_pipeline/llm/anthropic_llm.py를 구현하세요."
             )
 
         elif provider == LLMProvider.LOCAL:
             # TODO: 로컬 LLM 구현 필요 시 추가
             raise NotImplementedError(
                 "로컬 LLM은 아직 구현되지 않았습니다. "
-                "필요 시 feedback_system/llm/local_llm.py를 구현하세요."
+                "필요 시 feedback_pipeline/llm/local_llm.py를 구현하세요."
             )
 
         else:

@@ -3,6 +3,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from loguru import logger
 from openai import OpenAI
 from dotenv import load_dotenv
+from pathlib import Path
 import torch
 import ast
 import json
@@ -63,8 +64,10 @@ def build_assistant_prompt(assistant_prompt) -> dict:
 
 class UnderstandModel:
     def __init__(self):
-        self.json_template = load_json("json_template.json")
-        self.config_file = load_config("../../configs/llm_base_understand.yaml")
+        self.json_template_path = Path(__file__).parents[2] / "configs" / "json_template.json"
+        self.llm_understand_config_path = Path(__file__).parents[2] / "configs" / "llm_base_understand.yaml"
+        self.json_template = load_json(self.json_template_path)
+        self.config_file = load_config(self.llm_understand_config_path)
         self.sys_prompt = self.config_file["model"]["sys_prompt"]
         self.model_name = self.config_file["model"]["model_name"]
         self.api_key = os.getenv("UPSTAGE_API_KEY")
@@ -74,7 +77,11 @@ class UnderstandModel:
         self.client = OpenAI(api_key = self.api_key, base_url = self.config_file["model"]["base_url"])
         # self.max_turns = self.config_file.get("chat", {}).get("max_turns", 10)
     
-    def chat(self, messages: list[dict]) -> str:
+    # def chat(self, messages: list[dict]) -> str:
+    def chat(self, user_prompt):
+        messages = [build_system_prompt(self.sys_prompt, self.json_template)]
+        messages.append(build_user_prompt(user_prompt))
+        
         response = self.client.chat.completions.create(
             model = self.model_name,
             messages = messages,
@@ -95,6 +102,7 @@ class UnderstandModel:
             logger.info(f"TURN {turn + 1} 완료.")
 
 if __name__ == "__main__":
+    test_user_prompt = "오늘 홍대 가서 친구들이랑 놀건데 어떻게 입을까?"
     agent = UnderstandModel()
-    agent.multi_turn()
-        
+    resp = agent.chat(test_user_prompt)
+    print(resp)

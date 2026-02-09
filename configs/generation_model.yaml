@@ -15,3 +15,6 @@ model_img_path: "D:/final_pj/test/model.webp"
 
 # 실행 환경 설정
 use_fp16: True
+
+folder_map: {"tops": "상의", "bottoms": "하의", "outers": "아우터", "상의": "상의", "하의": "하의", "아우터": "아우터"}
+cat_to_db: {"상의": "shirt", "하의": "pant", "아우터": "outer"}

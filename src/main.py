@@ -15,7 +15,11 @@ if __name__ == "__main__":
     recommender = FashionRecommender(encoder)
     planner = OutfitPlanner(encoder)
     vton = VTONManager()
+    test_user_prompt = "오늘 홍대 가서 친구들이랑 놀건데 어떻게 입을까?"
+    template_result = understand_model.chat(test_user_prompt)
     
+    recommender.load_user_wardrobe()
+    recommender.load_styles()
     
 
 

@@ -5,3 +5,14 @@ __pycache__/
 *.egg-info
 *.json
 *.env
+
+# fashon-vton 오픈소스 ignore
+src/fashn-vton/.git
+src/fashn-vton/.gitignore
+src/fashn-vton/examples/
+src/fashn-vton/scripts/
+src/fashn-vton/src/
+src/fashn-vton/tests/
+src/fashn-vton/LICENSE
+src/fashn-vton/pyproject.toml
+src/fashn-vton/README.md

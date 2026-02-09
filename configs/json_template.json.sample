@@ -1,0 +1,42 @@
+{
+    "time_context": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "color": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "size_fit": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "season": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "location": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "mood": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "user_constraints": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "user_requirements": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    }
+}

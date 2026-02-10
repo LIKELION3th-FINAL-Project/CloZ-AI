@@ -153,7 +153,6 @@ class FashionRecommender:
         return 0.5 + (np.mean(confs) * 0.5) if confs else 0.7
 
     # ========== 메인 추천 함수 (고도화 버전) ==========
-
     def recommend_from_agent(self, agent_json: Dict, top_k: int = 5) -> Dict[str, List[Dict]]:
         """멀티 팩터 기반 추천 (신규/기존 형식 모두 지원)"""
         is_new = "style" in agent_json and isinstance(agent_json["style"], dict)

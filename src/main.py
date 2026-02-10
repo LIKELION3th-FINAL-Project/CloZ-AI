@@ -2,41 +2,53 @@ from fashion_engine import (
     CLIPEncoder, FashionDBManager, 
     FashionRecommender, OutfitPlanner, VTONManager, Visualizer
 )
-from utils.load import load_config
-from understand_model.understand_model import UnderstandModel
+from utils.load import load_config, load_json
+from understand_model.understand_model import UnderstandModel, extract_json_format, make_json_file
 from pathlib import Path
+from loguru import logger
 import torch
 import unicodedata
 
 if __name__ == "__main__":
-    config_path = Path(__file__).parent / "configs" / "generation_model.yaml"
+    config_root_path = Path(__file__).parents[1] / "configs" / "generation_model.yaml"
+    result_root_path = Path(__file__).parents[1] / "results" / "model_response.json"
+    generation_config_file = load_config(config_root_path)
+    item_top_k = generation_config_file["item_top_k"]
+    combination_top_k = generation_config_file["combination_top_k"]
+    num_of_show = generation_config_file["num_of_show"]
+    cat_map_planner = generation_config_file["cat_to_db"]
+    
+    model_resp_json_file = load_json(result_root_path)
+    
     understand_model = UnderstandModel()
     encoder = CLIPEncoder()
     recommender = FashionRecommender(encoder)
     planner = OutfitPlanner(encoder)
     vton = VTONManager()
     test_user_prompt = "오늘 홍대 가서 친구들이랑 놀건데 어떻게 입을까?"
-    template_result = understand_model.chat(test_user_prompt)
+    model_result = understand_model.chat(test_user_prompt)
+    model_result_json = extract_json_format(model_result)
+    make_json_file(model_result_json)
     
     recommender.load_user_wardrobe()
     recommender.load_styles()
     
-    cat_map_for_planner = {"상의": "shirt", "하의": "pant", "아우터": "outer"}
-    for idx, test in enumerate(test_cases):
+    for idx, test in enumerate(model_resp_json_file):
         logger.info("\n" + "=" * 60)
-        logger.info(f"4. 쿼리 처리: {test.get('original_query', 'New Format Query')}")
+        logger.info(f"User Prompt: {test_user_prompt}")
         logger.info("=" * 60)
         
         # 1. 추천 아이템 검색
-        recs_raw = recommender.recommend_from_agent(test, top_k=3)
-        recs = {cat_map_for_planner.get(k, k): v for k, v in recs_raw.items()}
+        recs_raw = recommender.recommend_from_agent(test, top_k = item_top_k)
+        recs = {cat_map_planner.get(k, k): v for k, v in recs_raw.items()}
         
-        if not recs: continue
-        Visualizer.show_recommendations(recs, top_k=3)
+        if not recs: 
+            continue
+        Visualizer.show_recommendations(recs, top_k = item_top_k)
         
         # 2. 조합 생성
         logger.info(f"\n5. 조합 생성 및 평가")
-        combos = planner.generate_combinations(recs, top_n=3)
+        combos = planner.generate_combinations(recs, top_n = combination_top_k)
         
         if combos:
             # Context 기반 쿼리 임베딩 생성 로직 삽입
@@ -72,7 +84,7 @@ if __name__ == "__main__":
             )
             
             if best_outfits:
-                Visualizer.show_top_combinations(best_outfits, num_to_show=3)
+                Visualizer.show_top_combinations(best_outfits, num_to_show = num_of_show)
                 vton.try_on(config.model_img_path, best_outfits[0]['combination'], f"output_q{idx}", idx)
     
     logger.info("\n✅ 파이프라인 완료!")

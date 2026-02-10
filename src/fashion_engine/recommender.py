@@ -23,10 +23,10 @@ class FashionRecommender:
         self.item_db = {} 
         self.style_profiles = {}
 
-    def load_user_wardrobe(self, collection_name="mycloset-embedding"):
+    def load_user_wardrobe(self, collection_name = "mycloset-embedding"):
         """ChromaDB 캐시를 활용하여 옷장 아이템 로드 (로컬 폴더 tops/bottoms/outers 대응)"""
         try:
-            client = chromadb.PersistentClient(path=self.config.chromadb_war_dir)
+            client = chromadb.PersistentClient(path = self.config["chromadb_user_war_embedding_dir"])
             col = client.get_or_create_collection(name=collection_name)
         except Exception as e:
             logger.error(f"ChromaDB 로드 실패: {e}")
@@ -36,9 +36,9 @@ class FashionRecommender:
         loaded_from = 0
         new_encoded = 0
 
-        if not os.path.exists(self.config.base_dir): 
+        if not os.path.exists(self.config["user_clothes_dir"]): 
             return {}
-        actual_dirs = os.listdir(self.config.base_dir)
+        actual_dirs = os.listdir(self.config["user_clothes_dir"])
 
         for folder_name in actual_dirs:
             norm_folder = folder_name.lower()
@@ -47,7 +47,7 @@ class FashionRecommender:
 
             kor_cat = self.folder_map[norm_folder]
             db_prefix = self.cat_to_db[kor_cat]
-            path = os.path.join(self.config.base_dir, folder_name)
+            path = os.path.join(self.config["user_clothes_dir"], folder_name)
 
             for f in os.listdir(path):
                 if not f.lower().endswith((".jpg", ".png", ".jpeg", ".webp")): 
@@ -82,7 +82,7 @@ class FashionRecommender:
     def load_styles(self):
         """ChromaDB에서 스타일별 레퍼런스 임베딩 로드"""
         try:
-            client = chromadb.PersistentClient(path=self.config.chromadb_ref_dir)
+            client = chromadb.PersistentClient(path = self.config["chromadb_ref_embedding_dir"])
             colls = client.list_collections()
             if not colls: return
             target_coll = next((c for c in colls if "reference" in c.name), colls[0])
@@ -94,7 +94,7 @@ class FashionRecommender:
                 style_name = unicodedata.normalize("NFC", meta['style_cat'])
                 style_dict[style_name].append(torch.tensor(emb))
             self.style_profiles = {k: torch.stack(v) for k, v in style_dict.items()}
-            print(f"[ChromaDB] Total styles loaded: {len(self.style_profiles)}")
+            logger.info(f"[ChromaDB] Total styles loaded: {len(self.style_profiles)}")
         except Exception as e: print(f"스타일 로드 실패: {e}")
 
     # ========== 신규 헬퍼 함수들 (고도화 로직) ==========

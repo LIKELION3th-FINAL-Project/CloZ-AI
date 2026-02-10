@@ -1,3 +1,4 @@
+user_clothes_dir: "../../data/user_wardrobe_image"
 user_top_image: "../../data/user_wardrobe_image/tops"
 user_bottom_image: "../../data/user_wardrobe_image/bottoms"
 user_outer_image: "../../data/user_wardrobe_image/outers"

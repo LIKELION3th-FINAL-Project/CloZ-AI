@@ -5,6 +5,12 @@ __pycache__/
 *.egg-info
 *.json
 *.env
+*.bin
+*.sqlite3
+*.jpg
+*.jpeg
+*.png
+
 
 # fashon-vton 오픈소스 ignore
 src/fashn_vton/.git
@@ -17,3 +23,4 @@ src/fashn_vton/LICENSE
 src/fashn_vton/pyproject.toml
 src/fashn_vton/README.md
 src/fashn_vton/weights/
+

@@ -1,20 +1,11 @@
-# 1. 사용자 옷장 데이터 이미지 폴더 (yj_closet)
-base_dir: "D:/final_pj/test/yj_closet"
-
-# 2. SQLite DB 경로 (root_path 아래 생성)
-db_path: "D:/final_pj/test/fashion_items.db"
-
-# 3. 레퍼런스 스타일 임베딩 DB (chromadb-reference-embeddings)
-chromadb_ref_dir: "D:/final_pj/test/chromadb-reference-embeddings/chromadb"
-
-# 4. 사용자 옷장 임베딩 캐시 DB (chromadb_mycloset-embeddings)
-chromadb_war_dir: "D:/final_pj/test/chromadb_mycloset-embeddings/chromadb"
-
+user_top_image: "../../data/user_wardrobe_image/tops"
+user_bottom_image: "../../data/user_wardrobe_image/bottoms"
+user_outer_image: "../../data/user_wardrobe_image/outers"
+chroma_db_path: "../../data/chromadb_embeddings/"
+chromadb_ref_embedding_dir: "../../data/chromadb_reference/" # 레퍼런스 임베딩
+chromadb_user_war_embedding_dir: "../../data/chromadb_mycloset" # 사용자 옷장 임베딩
 model_name: "patrickjohncyh/fashion-clip"
-model_img_path: "D:/final_pj/test/model.webp"
-
-# 실행 환경 설정
+user_body_image: "../../data/user_body_image/body_image.png"
 use_fp16: True
-
 folder_map: {"tops": "상의", "bottoms": "하의", "outers": "아우터", "상의": "상의", "하의": "하의", "아우터": "아우터"}
 cat_to_db: {"상의": "shirt", "하의": "pant", "아우터": "outer"}

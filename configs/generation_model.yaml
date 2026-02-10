@@ -8,5 +8,9 @@ chromadb_user_war_embedding_dir: "../../data/chromadb_mycloset" # 사용자 옷�
 model_name: "patrickjohncyh/fashion-clip"
 user_body_image: "../../data/user_body_image/body_image.png"
 use_fp16: True
+item_top_k: 3
+combination_top_k: 3
+num_of_show: 3
+
 folder_map: {"tops": "상의", "bottoms": "하의", "outers": "아우터", "상의": "상의", "하의": "하의", "아우터": "아우터"}
 cat_to_db: {"상의": "shirt", "하의": "pant", "아우터": "outer"}

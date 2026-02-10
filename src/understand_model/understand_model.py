@@ -13,7 +13,7 @@ import os
 
 load_dotenv()
 
-def extract_json_file(text):
+def extract_json_format(text):
     match_ = re.search(r"\{.*\}", text, flags = re.DOTALL)
         
     if not match_:
@@ -88,6 +88,7 @@ class UnderstandModel:
             temperature = self.temperature,
             reasoning_effort = self.reasoning_effort,
         )
+        logger.info(f"MODEL RESP: {response.choices[0].message.content}")
         return response.choices[0].message.content
     
     def multi_turn(self):

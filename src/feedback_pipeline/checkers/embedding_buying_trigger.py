@@ -139,13 +139,14 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # 1. 검색 쿼리 결정 (영어 우선)
+        # 검색 쿼리 결정 (영어 우선)
         search_query = feedback_text
         avoid_colors = []
         prefer_colors = []
         prefer_styles = []
         prefer_brightness = None  # "light" or "dark"
         target_detail_cats = []  # 세부카테고리 필터
+        avoid_detail_cats = []   # 세부카테고리 제외
 
         if context:
             # 영어 요구사항 사용
@@ -157,6 +158,8 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     # 세부카테고리 추출
                     if structured.get('target_detail_cats'):
                         target_detail_cats = structured['target_detail_cats']
+                    if structured.get('avoid_detail_cats'):
+                        avoid_detail_cats = structured['avoid_detail_cats']
                     # 선호 색상 추출
                     prefer_colors = structured.get('prefer_colors', [])
                     # 제한사항에서 회피 색상 추출
@@ -171,16 +174,32 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     # 밝기 선호도 추출
                     prefer_brightness = structured.get('prefer_brightness')
 
+            # 복수 피드백 범위가 전달되면 단일 category_main 필터를 강제하지 않는다.
+            scopes = context.get("feedback_scopes")
+            if isinstance(scopes, list) and len(scopes) > 1:
+                target_category = None
+
             # avoid_attributes에서도 추출
             if 'avoid_attributes' in context:
                 avoid_attrs = context['avoid_attributes']
                 if isinstance(avoid_attrs, dict):
                     avoid_colors.extend(avoid_attrs.get('colors', []))
 
-        # 필터 조건 로그
-        print(f"  [BuyingTrigger] detail_cats={target_detail_cats}, colors={prefer_colors}, brightness={prefer_brightness}")
+        target_detail_cats = self._sanitize_detail_cats_for_target_category(
+            target_detail_cats, target_category
+        )
+        avoid_detail_cats = self._sanitize_detail_cats_for_target_category(
+            avoid_detail_cats, target_category
+        )
 
-        # 2. FashionCLIP으로 쿼리 임베딩 생성
+        # 필터 조건 로그
+        print(
+            "  [BuyingTrigger] detail_cats="
+            f"{target_detail_cats}, avoid_detail_cats={avoid_detail_cats}, "
+            f"colors={prefer_colors}, brightness={prefer_brightness}"
+        )
+
+        # FashionCLIP으로 쿼리 임베딩 생성
         try:
             query_embedding = self.embedder.embed_text(search_query)
         except Exception as e:
@@ -191,36 +210,13 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # 3. ChromaDB 유사도 검색
+        # ChromaDB 유사도 검색
         try:
-            # 카테고리 필터링 구성
-            # Havati 대분류: TOPS, BOTTOMS, OUTER
-            CATEGORY_TO_HAVATI = {
-                "상의": "TOPS",
-                "바지": "BOTTOMS",
-                "아우터": "OUTER",
-            }
-
-            where_filter = None
-            filters = []
-
-            # 대분류 필터 (한글 → Havati 영문)
-            if target_category:
-                havati_cat = CATEGORY_TO_HAVATI.get(target_category, target_category)
-                filters.append({"category_main": havati_cat})
-
-            # 세부분류 필터 (category_sub) - Havati 카테고리 그대로 사용
-            if target_detail_cats:
-                if len(target_detail_cats) == 1:
-                    filters.append({"category_sub": target_detail_cats[0]})
-                elif len(target_detail_cats) > 1:
-                    filters.append({"$or": [{"category_sub": cat} for cat in target_detail_cats]})
-
-            # 필터 결합
-            if len(filters) == 1:
-                where_filter = filters[0]
-            elif len(filters) > 1:
-                where_filter = {"$and": filters}
+            where_filter = self._build_where_filter(
+                target_category=target_category,
+                target_detail_cats=target_detail_cats if len(target_detail_cats) <= 1 else None,
+                single_detail_cat=None,
+            )
 
             print(f"  [BuyingTrigger] ChromaDB filter: {where_filter}")
 
@@ -237,98 +233,266 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 target_category=target_category
             )
 
-        # 4. Threshold 필터링 및 상품 정보 구성
-        candidates = []
-        all_similarities = []
+        # Threshold 필터링 및 상품 정보 구성
+        candidates = self._extract_candidates_from_query_results(
+            results=results,
+            avoid_colors=avoid_colors,
+            avoid_detail_cats=avoid_detail_cats,
+            prefer_colors=prefer_colors,
+            prefer_styles=prefer_styles,
+            prefer_brightness=prefer_brightness,
+        )
 
-        if results['ids'] and results['ids'][0] and results['distances'] and results['distances'][0]:
-            for i, distance in enumerate(results['distances'][0]):
-                # ChromaDB cosine distance: 1 - cosine_similarity
-                similarity = 1 - distance
-                all_similarities.append(similarity)
+        fallback_used = False
+        if not candidates:
+            fallback_where = self._build_where_filter(
+                target_category=target_category,
+                target_detail_cats=None,
+                single_detail_cat=None,
+            )
+            try:
+                fallback_results = self.collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=max(limit * 10, 30),
+                    where=fallback_where,
+                )
+                candidates = self._extract_candidates_from_query_results(
+                    results=fallback_results,
+                    avoid_colors=avoid_colors,
+                    avoid_detail_cats=avoid_detail_cats,
+                    prefer_colors=prefer_colors,
+                    prefer_styles=prefer_styles,
+                    prefer_brightness=prefer_brightness,
+                    min_similarity=None,
+                )
+                fallback_used = bool(candidates)
+            except Exception:
+                pass
 
-                if similarity >= self.threshold:
-                    product_id = results['ids'][0][i]
-
-                    # Havati 메타데이터에서 color, style_tags 직접 조회
-                    meta = self._metadata_cache.get(product_id, {})
-                    product_color = meta.get('color', '')
-                    product_styles = meta.get('style_tags', [])
-
-                    # 회피 색상 필터링
-                    if product_color and product_color.lower() in [c.lower() for c in avoid_colors]:
-                        continue
-
-                    # 밝기 선호도 필터링
-                    brightness_bonus = 0.0
-                    if prefer_brightness and product_color:
-                        product_brightness = get_brightness(product_color)
-                        if prefer_brightness == "light":
-                            if product_brightness == "dark":
-                                continue
-                            elif product_brightness == "light":
-                                brightness_bonus = 0.15
-                        elif prefer_brightness == "dark":
-                            if product_brightness == "light":
-                                continue
-                            elif product_brightness == "dark":
-                                brightness_bonus = 0.15
-
-                    # 색상 직접 매칭 보너스 (최우선, 0.30)
-                    color_bonus = 0.0
-                    if prefer_colors and product_color:
-                        if product_color.lower() in [c.lower() for c in prefer_colors]:
-                            color_bonus = 0.30
-
-                    # 스타일 매칭 보너스 (캐주얼 제외, 최대 0.15)
-                    style_bonus = 0.0
-                    if prefer_styles and product_styles:
-                        meaningful_styles = [s for s in product_styles if s != "캐주얼"]
-                        matching_styles = set(s.lower() for s in prefer_styles) & set(s.lower() for s in meaningful_styles)
-                        if matching_styles:
-                            style_bonus = min(len(matching_styles) * 0.10, 0.15)
-
-                    # 밝기 보너스는 색상 매칭 없을 때만 적용
-                    if color_bonus > 0:
-                        brightness_bonus = 0.0
-
-                    # 최종 점수: 임베딩(0.55) + 색상(0.30) + 스타일(0.15) + 밝기(0.15)
-                    final_score = similarity * 0.55 + color_bonus + style_bonus + brightness_bonus
-
-                    candidates.append({
-                        'product_id': product_id,
-                        'similarity': similarity,
-                        'color_bonus': color_bonus,
-                        'style_bonus': style_bonus,
-                        'brightness_bonus': brightness_bonus,
-                        'final_score': final_score,
-                        'color': product_color,
-                        'styles': product_styles
-                    })
-
-            # 디버깅: 유사도 범위 출력
-            if all_similarities:
-                print(f"  [BuyingTrigger] 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
-
-        # 5. 최종 점수 기준 정렬 및 상위 N개 선택
+        # 최종 점수 기준 정렬 및 상위 N개 선택
         candidates.sort(key=lambda x: x['final_score'], reverse=True)
 
+        selected_by_cat = None
+        if len(target_detail_cats) > 1:
+            selected_by_cat = {cat: [] for cat in target_detail_cats}
+            selected_ids = set()
+
+            def _match_cat(candidate_cat: str, wanted_cat: str) -> bool:
+                return (candidate_cat or "").strip().lower() == (wanted_cat or "").strip().lower()
+
+            for detail_cat in target_detail_cats:
+                cat_candidates = [c for c in candidates if _match_cat(c.get("category_sub", ""), detail_cat)]
+                for c in cat_candidates:
+                    if len(selected_by_cat[detail_cat]) >= 3:
+                        break
+                    pid = c.get("product_id")
+                    if pid in selected_ids:
+                        continue
+                    selected_by_cat[detail_cat].append(c)
+                    selected_ids.add(pid)
+
+            for detail_cat in target_detail_cats:
+                while len(selected_by_cat[detail_cat]) < 3:
+                    detail_where = self._build_where_filter(
+                        target_category=target_category,
+                        target_detail_cats=None,
+                        single_detail_cat=detail_cat,
+                    )
+                    extra_results = self.collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=max(limit * 8, 30),
+                        where=detail_where,
+                    )
+                    extras = self._extract_candidates_from_query_results(
+                        results=extra_results,
+                        avoid_colors=avoid_colors,
+                        avoid_detail_cats=avoid_detail_cats,
+                        prefer_colors=prefer_colors,
+                        prefer_styles=prefer_styles,
+                        prefer_brightness=prefer_brightness,
+                    )
+                    added = False
+                    for c in extras:
+                        if len(selected_by_cat[detail_cat]) >= 3:
+                            break
+                        pid = c.get("product_id")
+                        if pid in selected_ids:
+                            continue
+                        selected_by_cat[detail_cat].append(c)
+                        selected_ids.add(pid)
+                        added = True
+                    if not added:
+                        break
+
+            ordered = []
+            for detail_cat in target_detail_cats:
+                ordered.extend(selected_by_cat[detail_cat][:3])
+            if ordered:
+                candidates = ordered
+
+        effective_limit = max(limit, len(target_detail_cats) * 3) if len(target_detail_cats) > 1 else limit
+
         products = []
-        for candidate in candidates[:limit]:
+        for candidate in candidates[:effective_limit]:
             product = self._create_product_recommendation(candidate)
             if product:
                 products.append(product)
 
-        # 5. 결과 반환
+        grouped_products = None
+        if selected_by_cat:
+            grouped_products = {}
+            by_id = {str(p.product_id): p for p in products}
+            for detail_cat, cat_candidates in selected_by_cat.items():
+                grouped_products[detail_cat] = []
+                for c in cat_candidates[:3]:
+                    pid = str(c.get("product_id", ""))
+                    p = by_id.get(pid)
+                    if p:
+                        grouped_products[detail_cat].append(p)
+
+        # 결과 반환
         success = len(products) > 0
         reasoning = f"'{search_query}' 검색 완료: {len(products)}개 상품 추천 (threshold={self.threshold})"
+        if fallback_used:
+            reasoning += " [fallback:no-threshold]"
 
         return BuyingRecommendation(
             success=success,
             products=products,
             reasoning=reasoning,
             target_category=target_category
+            ,
+            grouped_products=grouped_products
         )
+
+    def _sanitize_detail_cats_for_target_category(
+        self,
+        detail_cats: List[str],
+        target_category: Optional[str],
+    ) -> List[str]:
+        if not detail_cats:
+            return []
+        if not target_category:
+            return detail_cats
+
+        top_cats = {"Tee", "Shirt", "Sweatshirt", "Knitwear"}
+        bottom_cats = {"Denim", "Chino", "Trousers", "Easy_pants", "Work_pants", "Short"}
+        outer_cats = {"Jacket_Blouson", "Coat", "Cardigan", "Jumper_Parka", "Padding", "Leather", "Vest"}
+        cat_to_group = {"상의": top_cats, "바지": bottom_cats, "아우터": outer_cats}
+
+        allowed = cat_to_group.get(target_category)
+        if not allowed:
+            return detail_cats
+        return [x for x in detail_cats if x in allowed]
+
+    def _build_where_filter(
+        self,
+        target_category: Optional[str],
+        target_detail_cats: Optional[List[str]],
+        single_detail_cat: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        category_to_havati = {
+            "상의": "TOPS",
+            "바지": "BOTTOMS",
+            "아우터": "OUTER",
+        }
+        filters = []
+
+        if target_category:
+            havati_cat = category_to_havati.get(target_category, target_category)
+            filters.append({"category_main": havati_cat})
+
+        if single_detail_cat:
+            filters.append({"category_sub": single_detail_cat})
+        elif target_detail_cats:
+            if len(target_detail_cats) == 1:
+                filters.append({"category_sub": target_detail_cats[0]})
+            elif len(target_detail_cats) > 1:
+                filters.append({"$or": [{"category_sub": cat} for cat in target_detail_cats]})
+
+        if len(filters) == 1:
+            return filters[0]
+        if len(filters) > 1:
+            return {"$and": filters}
+        return None
+
+    def _extract_candidates_from_query_results(
+        self,
+        results: Dict[str, Any],
+        avoid_colors: List[str],
+        avoid_detail_cats: List[str],
+        prefer_colors: List[str],
+        prefer_styles: List[str],
+        prefer_brightness: Optional[str],
+        min_similarity: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        candidates = []
+        all_similarities = []
+        if results['ids'] and results['ids'][0] and results['distances'] and results['distances'][0]:
+            for i, distance in enumerate(results['distances'][0]):
+                similarity = 1 - distance
+                all_similarities.append(similarity)
+                threshold = self.threshold if min_similarity is None else min_similarity
+                if threshold is not None and similarity < threshold:
+                    continue
+
+                product_id = results['ids'][0][i]
+                meta = self._metadata_cache.get(product_id, {})
+                product_color = meta.get('color', '')
+                product_styles = meta.get('style_tags', [])
+                product_sub = meta.get('category_sub', '')
+
+                if product_color and product_color.lower() in [c.lower() for c in avoid_colors]:
+                    continue
+                if product_sub and product_sub.lower() in [c.lower() for c in avoid_detail_cats]:
+                    continue
+
+                brightness_bonus = 0.0
+                if prefer_brightness and product_color:
+                    product_brightness = get_brightness(product_color)
+                    if prefer_brightness == "light":
+                        if product_brightness == "dark":
+                            continue
+                        if product_brightness == "light":
+                            brightness_bonus = 0.15
+                    elif prefer_brightness == "dark":
+                        if product_brightness == "light":
+                            continue
+                        if product_brightness == "dark":
+                            brightness_bonus = 0.15
+
+                color_bonus = 0.0
+                if prefer_colors and product_color:
+                    if product_color.lower() in [c.lower() for c in prefer_colors]:
+                        color_bonus = 0.30
+
+                style_bonus = 0.0
+                if prefer_styles and product_styles:
+                    meaningful_styles = [s for s in product_styles if s != "캐주얼"]
+                    matching_styles = set(s.lower() for s in prefer_styles) & set(s.lower() for s in meaningful_styles)
+                    if matching_styles:
+                        style_bonus = min(len(matching_styles) * 0.10, 0.15)
+
+                if color_bonus > 0:
+                    brightness_bonus = 0.0
+
+                final_score = similarity * 0.55 + color_bonus + style_bonus + brightness_bonus
+
+                candidates.append({
+                    'product_id': product_id,
+                    'similarity': similarity,
+                    'color_bonus': color_bonus,
+                    'style_bonus': style_bonus,
+                    'brightness_bonus': brightness_bonus,
+                    'final_score': final_score,
+                    'color': product_color,
+                    'styles': product_styles,
+                    'category_sub': product_sub,
+                })
+
+            if all_similarities:
+                print(f"  [BuyingTrigger] 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
+        return candidates
 
     def _create_product_recommendation(
         self,

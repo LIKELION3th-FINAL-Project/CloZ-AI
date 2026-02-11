@@ -100,7 +100,7 @@ class LLMFactory:
 
     @staticmethod
     def create_gemini(
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-3-flash-preview",
         api_key: Optional[str] = None,
         temperature: float = 0,
         **kwargs
@@ -109,7 +109,7 @@ class LLMFactory:
         Gemini LLM 빠른 생성
 
         Args:
-            model_name: 모델명 (기본: gemini-2.0-flash)
+            model_name: 모델명 (기본: gemini-3-flash-preview)
             api_key: API 키 (없으면 환경변수 사용)
             temperature: 온도
             **kwargs: 추가 설정
@@ -127,77 +127,22 @@ class LLMFactory:
 
     @staticmethod
     def create_manager_agent_llm(api_key: Optional[str] = None) -> BaseLLM:
-        """
-        Manager Agent용 LLM 생성
-
-        주석 변경으로 프로바이더 전환 가능:
-        - OpenRouter: openai/gpt-4o-mini (기본)
-        - OpenAI: gpt-4o-mini
-        - Gemini: gemini-2.5-flash
-        """
-        # === OpenRouter (기본, 주석 해제) ===
+        """Manager Agent용 LLM 생성"""
         config = LLMConfig(
-            model_name="openai/gpt-4o-mini",
+            model_name="gemini-3-flash-preview",
             api_key=api_key,
             temperature=0,
             max_tokens=1024,
         )
-        return LLMFactory.create(LLMProvider.OPENROUTER, config)
-
-        # === OpenAI (주석 처리) ===
-        # config = LLMConfig(
-        #     model_name="gpt-4o-mini",
-        #     api_key=api_key,
-        #     temperature=0,
-        #     max_tokens=1024,
-        #     extra_params={"seed": 42}
-        # )
-        # return LLMFactory.create(LLMProvider.OPENAI, config)
-
-        # === Gemini (주석 처리) ===
-        # config = LLMConfig(
-        #     model_name="gemini-2.5-flash",
-        #     api_key=api_key,
-        #     temperature=0,
-        #     max_tokens=1024,
-        #     seed=42
-        # )
-        # return LLMFactory.create(LLMProvider.GEMINI, config)
+        return LLMFactory.create(LLMProvider.GEMINI, config)
 
     @staticmethod
     def create_analyst_agent_llm(api_key: Optional[str] = None) -> BaseLLM:
-        """
-        Analyst Agent용 LLM 생성
-
-        주석 변경으로 프로바이더 전환 가능:
-        - OpenRouter: openai/gpt-oss-120b:free (기본)
-        - OpenAI: GPT-5 nano
-        - Gemini: gemini-3-flash-preview
-        """
-        # === OpenRouter (기본, 주석 해제) ===
+        """Analyst Agent용 LLM 생성"""
         config = LLMConfig(
-            model_name="openai/gpt-oss-120b:free",
+            model_name="gemini-3-flash-preview",
             api_key=api_key,
             temperature=0,
             max_tokens=2048,
         )
-        return LLMFactory.create(LLMProvider.OPENROUTER, config)
-
-        # === OpenAI (주석 처리) ===
-        # config = LLMConfig(
-        #     model_name="GPT-5 nano",
-        #     api_key=api_key,
-        #     temperature=0.5,
-        #     max_tokens=2048,
-        #     extra_params={"seed": 42}
-        # )
-        # return LLMFactory.create(LLMProvider.OPENAI, config)
-
-        # === Gemini (주석 처리) ===
-        # config = LLMConfig(
-        #     model_name="gemini-3-flash-preview",
-        #     api_key=api_key,
-        #     temperature=0.5,
-        #     max_tokens=2048,
-        # )
-        # return LLMFactory.create(LLMProvider.GEMINI, config)
+        return LLMFactory.create(LLMProvider.GEMINI, config)

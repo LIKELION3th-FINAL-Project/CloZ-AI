@@ -82,10 +82,10 @@ class LLMConfig:
     
     # 기본 모델
     DEFAULT_PROVIDER: str = "gemini"
-    DEFAULT_MODEL: str = "gemini-2.0-flash"
-    
-    # 분석용 모델 (고품질)
-    ANALYSIS_MODEL: str = "gpt-4o"
+    DEFAULT_MODEL: str = "gemini-3-flash-preview"
+
+    # 분석용 모델
+    ANALYSIS_MODEL: str = "gemini-3-flash-preview"
     
     def __post_init__(self):
         """환경변수에서 API 키 로드"""

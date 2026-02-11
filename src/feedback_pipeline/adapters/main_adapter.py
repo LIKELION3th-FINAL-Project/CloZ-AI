@@ -107,6 +107,8 @@ def convert_outfit_to_outfitset(
             continue
 
         item = combination[i]
+        if item is None:
+            continue
 
         # 파일명 추출
         if isinstance(item, dict):

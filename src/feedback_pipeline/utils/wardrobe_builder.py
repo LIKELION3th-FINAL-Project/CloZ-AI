@@ -295,29 +295,29 @@ class WardrobeBuilder:
         5. WardrobeItem 반환
         """
         try:
-            # 1. 이미지 로드
+            # 이미지 로드
             if not os.path.exists(image_path):
                 print(f"[ERROR] 파일 없음: {image_path}")
                 return None
 
             image = Image.open(image_path).convert("RGB")
 
-            # 2. 배경 제거 (선택적)
+            # 배경 제거 (선택적)
             if self.use_background_removal:
                 image = self.classifier.remove_background(image)
 
-            # 3. 세부 카테고리 분류
+            # 세부 카테고리 분류
             if detail_cat is None:
                 korean_cat = BROAD_CAT_TO_KOREAN[broad_cat]
                 detail_cat = self.classifier.classify_item(image, korean_cat)
 
-            # 4. 임베딩 생성
+            # 임베딩 생성
             embedding = self.embedder.embed_image(image_path)
             if embedding is None:
                 print(f"[ERROR] 임베딩 생성 실패: {image_path}")
                 return None
 
-            # 5. WardrobeItem 생성
+            # WardrobeItem 생성
             item_id = self._generate_item_id(image_path, broad_cat)
 
             return WardrobeItem(

@@ -374,15 +374,15 @@ class ProductEmbeddingBuilder:
                 print(f"  [ERROR] 이미지 없음: {image_path}")
                 return (False, None)
 
-            # 1. 색상 추출
+            # 색상 추출
             color = self._extract_color_from_name(product_name)
             if not color:
                 color = self._extract_color_via_llm(image_path)
 
-            # 2. 스타일 태그 추출
+            # 스타일 태그 추출
             style_tags = self._extract_style_tags(image_path)
 
-            # 3. 임베딩 생성
+            # 임베딩 생성
             embedding = self.embedder.embed_image(image_path)
             if embedding is None:
                 print(f"  [ERROR] 임베딩 생성 실패")

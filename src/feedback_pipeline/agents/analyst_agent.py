@@ -143,7 +143,7 @@ class AnalystAgent:
         self.config = config or AnalystConfig()
         self.storage = storage or JsonStorage()
 
-        # LLM 초기화 (gpt-oss)
+        # LLM 초기화
         self.llm = llm or LLMFactory.create_analyst_agent_llm()
 
     # ==================== 분석 ====================

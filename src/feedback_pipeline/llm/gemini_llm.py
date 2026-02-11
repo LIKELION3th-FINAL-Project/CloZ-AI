@@ -21,9 +21,7 @@ class GeminiLLM(BaseLLM):
     """
     Google Gemini API를 사용하는 LLM 구현체
 
-    지원 모델:
-    - gemini-1.5-flash (Manager Agent 권장 - 빠르고 저렴)
-    - gemini-1.5-pro (Analyst Agent 권장 - 강력한 분석)
+    기본 모델: gemini-3-flash-preview
     """
 
     def __init__(self, config: LLMConfig):

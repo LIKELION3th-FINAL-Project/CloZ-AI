@@ -26,7 +26,8 @@ class WardrobeCheckResult:
     """
     is_possible: bool
     missing_items: List[Dict[str, Any]] = field(default_factory=list)
-    matching_items: List[int] = field(default_factory=list)
+    matching_items: List[str] = field(default_factory=list)
+    candidate_pool: Dict[str, List[str]] = field(default_factory=dict)
     reason: str = ""
     confidence: float = 1.0
 
@@ -35,6 +36,7 @@ class WardrobeCheckResult:
             "is_possible": self.is_possible,
             "missing_items": self.missing_items,
             "matching_items": self.matching_items,
+            "candidate_pool": self.candidate_pool,
             "reason": self.reason,
             "confidence": self.confidence,
         }
@@ -73,7 +75,10 @@ class WardrobeCheckerInterface(ABC):
         self,
         requirements: List[str],
         user_id: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        target_categories: Optional[List[str]] = None,
+        target_detail_cats: Optional[List[str]] = None,
+        avoid_detail_cats: Optional[List[str]] = None,
     ) -> WardrobeCheckResult:
         """
         옷장 내 아이템으로 요구사항 충족 가능 여부 판단
@@ -129,7 +134,10 @@ class DummyWardrobeChecker(WardrobeCheckerInterface):
         self,
         requirements: List[str],
         user_id: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        target_categories: Optional[List[str]] = None,
+        target_detail_cats: Optional[List[str]] = None,
+        avoid_detail_cats: Optional[List[str]] = None,
     ) -> WardrobeCheckResult:
         """더미: 항상 가능 반환"""
         return WardrobeCheckResult(
@@ -151,7 +159,10 @@ class AlwaysBuyingWardrobeChecker(WardrobeCheckerInterface):
         self,
         requirements: List[str],
         user_id: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        target_categories: Optional[List[str]] = None,
+        target_detail_cats: Optional[List[str]] = None,
+        avoid_detail_cats: Optional[List[str]] = None,
     ) -> WardrobeCheckResult:
         """더미: 항상 불가능 반환"""
         return WardrobeCheckResult(

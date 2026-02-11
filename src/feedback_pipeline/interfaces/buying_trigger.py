@@ -79,16 +79,24 @@ class BuyingRecommendation:
     reasoning: str = ""
     target_category: Optional[str] = None
     sort_options: List[str] = field(default_factory=lambda: ["price_asc", "price_desc", "match_score"])
+    grouped_products: Optional[Dict[str, List[ProductRecommendation]]] = None
     feedback_analysis: Optional[Dict[str, Any]] = None
     profile_updates: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        grouped = None
+        if self.grouped_products:
+            grouped = {
+                key: [p.to_dict() if hasattr(p, "to_dict") else p for p in value]
+                for key, value in self.grouped_products.items()
+            }
         return {
             "success": self.success,
             "products": [p.to_dict() for p in self.products],
             "reasoning": self.reasoning,
             "target_category": self.target_category,
             "sort_options": self.sort_options,
+            "grouped_products": grouped,
             "feedback_analysis": self.feedback_analysis,
             "profile_updates": self.profile_updates,
         }

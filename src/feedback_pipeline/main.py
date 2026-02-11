@@ -77,12 +77,12 @@ def run_beta_test():
     clear_screen()
     print_header("CloZ-AI Feedback Pipeline - Beta Test Mode")
     
-    # 1. 초기화
+    # 초기화
     config = ManagerConfig(max_regenerate_count=2) # 베타 테스트를 위해 2회로 상향
     manager = ManagerAgent(config=config)
     user_id = "beta_tester"
     
-    # 2. 오리지널 쿼리 입력
+    # 오리지널 쿼리 입력
     original_prompt = input("\n[Step 1] 어떤 코디를 추천받고 싶으신가요?\n입력: ").strip()
     if not original_prompt:
         original_prompt = "데일리 캐주얼 스타일 추천해줘"
@@ -101,7 +101,7 @@ def run_beta_test():
     print(f"\n[AI] '{original_prompt}'에 맞는 코디를 생성했습니다!")
     print(f"추천 착장: {current_outfit.products[0].product_name} + {current_outfit.products[1].product_name}")
     
-    # 3. 피드백 루프
+    # 피드백 루프
     while True:
         print_header("사용자 피드백 단계")
         print(f"현재 코디: {[p.product_name for p in current_outfit.products]}")
@@ -147,8 +147,26 @@ def run_beta_test():
             elif decision.action == ActionType.BUYING:
                 if decision.buying_recommendations:
                     print("\n[상품 추천 목록]:")
-                    for i, prod in enumerate(decision.buying_recommendations.recommendations[:3]):
-                        print(f"- {prod.get('product_name')} ({prod.get('brand')})")
+                    grouped = getattr(decision.buying_recommendations, "grouped_products", None)
+                    printed = False
+                    if grouped:
+                        for group_name, group_items in grouped.items():
+                            if not group_items:
+                                continue
+                            printed = True
+                            print(f"  - [{group_name}]")
+                            for prod in group_items[:3]:
+                                if hasattr(prod, "to_dict"):
+                                    prod = prod.to_dict()
+                                print(f"    - {prod.get('product_name')} ({prod.get('brand')})")
+                    if not printed:
+                        recs = getattr(decision.buying_recommendations, "products", [])
+                        for i, prod in enumerate(recs[:3]):
+                            if hasattr(prod, "to_dict"):
+                                prod = prod.to_dict()
+                            print(f"- {prod.get('product_name')} ({prod.get('brand')})")
+                        if not recs:
+                            print("  (조건에 맞는 추천 상품이 없습니다)")
                 manager.end_session(session.session_id, SessionStatus.BUYING_REDIRECT)
                 break
             elif decision.action == ActionType.ASK_MORE:

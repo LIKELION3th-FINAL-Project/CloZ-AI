@@ -16,7 +16,7 @@ class ContextAnalyzer:
         초기화
         
         Args:
-            llm: 분석에 사용할 LLM 인스턴스 (기본 gpt-4o-mini)
+            llm: 분석에 사용할 LLM 인스턴스
         """
         self.llm = llm or LLMFactory.create_manager_agent_llm()
 

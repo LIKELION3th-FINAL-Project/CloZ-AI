@@ -6,6 +6,7 @@ Original Query + Feedbacks → 통합 쿼리 생성
 
 import os
 import json
+import re
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 import requests
@@ -30,6 +31,7 @@ class RefinedQuery:
     requirements_en: List[str] = field(default_factory=list)  # 영어 요구사항 (FashionCLIP용): ["bright colored top", "comfortable fit pants"]
     constraints: List[str] = field(default_factory=list)   # 제한사항: ["검은색 제외", "타이트한 옷 제외"]
     target_detail_cats: List[str] = field(default_factory=list)  # 타겟 세부카테고리: ["Knitwear", "Sweatshirt"]
+    avoid_detail_cats: List[str] = field(default_factory=list)  # 제외 세부카테고리: ["Knitwear"]
     prefer_brightness: Optional[str] = None                 # 색상 밝기 선호: "light" or "dark"
     original_text: str = ""                                 # 원본 텍스트
 
@@ -42,6 +44,7 @@ class RefinedQuery:
             "requirements_en": self.requirements_en,
             "constraints": self.constraints,
             "target_detail_cats": self.target_detail_cats,
+            "avoid_detail_cats": self.avoid_detail_cats,
             "prefer_brightness": self.prefer_brightness,
             "original_text": self.original_text,
         }
@@ -72,27 +75,27 @@ class StructuredOriginalQuery:
         """
         parts = []
 
-        # 1. 핏 정보 (가장 중요 - 의류 특성)
+        # 핏 정보 (가장 중요 - 의류 특성)
         if self.size_fit:
             parts.extend(self.size_fit[:2])
 
-        # 2. 색상 정보
+        # 색상 정보
         if self.color:
             parts.extend(self.color[:3])
 
-        # 3. 시즌 정보
+        # 시즌 정보
         if self.season:
             parts.extend(self.season)
 
-        # 4. 무드 정보
+        # 무드 정보
         if self.mood:
             parts.extend(self.mood)
 
-        # 5. 장소 정보 (스타일 힌트)
+        # 장소 정보 (스타일 힌트)
         if self.location:
             parts.extend([f"{loc} style" for loc in self.location])
 
-        # 6. 명시적 요구사항
+        # 명시적 요구사항
         if self.user_requirements:
             parts.extend(self.user_requirements)
 
@@ -167,13 +170,13 @@ class QueryBuilder:
         Returns:
             CombinedQuery
         """
-        # 1. Original Query 텍스트 추출
+        # Original Query 텍스트 추출
         original_text = self._format_original_query(original_query)
 
-        # 2. Feedbacks 요약
+        # Feedbacks 요약
         feedback_summary = self._summarize_feedbacks(feedbacks, feedback_scopes)
 
-        # 3. 피드백이 없으면 원본 반환
+        # 피드백이 없으면 원본 반환
         if not feedbacks or not feedback_summary:
             return CombinedQuery(
                 combined_text=original_text,
@@ -182,13 +185,13 @@ class QueryBuilder:
                 feedback_summary=""
             )
 
-        # 4. Solar Pro 3로 지능적 결합
+        # Solar Pro 3로 지능적 결합
         combined_result = self._combine_with_llm(
             original_text=original_text,
             feedbacks=feedbacks
         )
 
-        # 5. 결합된 쿼리를 구조화된 정보로 정제
+        # 결합된 쿼리를 구조화된 정보로 정제
         combined_text = combined_result["combined_query"]
         refined = self.refine_original_query(combined_text)
 
@@ -281,8 +284,7 @@ class QueryBuilder:
 
             # JSON 파싱
             parsed = json.loads(content)
-
-            return RefinedQuery(
+            refined = RefinedQuery(
                 mood=parsed.get("mood", []),
                 time=parsed.get("time"),
                 location=parsed.get("location"),
@@ -290,14 +292,70 @@ class QueryBuilder:
                 requirements_en=parsed.get("requirements_en", []),
                 constraints=parsed.get("constraints", []),
                 target_detail_cats=parsed.get("target_detail_cats", []),
+                avoid_detail_cats=parsed.get("avoid_detail_cats", []),
                 prefer_brightness=parsed.get("prefer_brightness"),
                 original_text=original_query
             )
+            return self._apply_detail_cat_negation_rules(original_query, refined)
 
         except Exception as e:
             # Fallback: 빈 구조 반환
             print(f"[QueryBuilder] 쿼리 정제 실패, Fallback 사용: {e}")
-            return RefinedQuery(original_text=original_query)
+            fallback = RefinedQuery(original_text=original_query)
+            return self._apply_detail_cat_negation_rules(original_query, fallback)
+
+    def _apply_detail_cat_negation_rules(self, text: str, refined: RefinedQuery) -> RefinedQuery:
+        """
+        LLM 출력 보정:
+        - '니트 말고', '데님 제외' 같은 부정문은 target이 아니라 avoid로 강제 이동
+        """
+        if not text:
+            return refined
+
+        rules = {
+            "Knitwear": [r"니트", r"knit"],
+            "Sweatshirt": [r"맨투맨", r"스웨트", r"후드", r"후드티", r"sweatshirt", r"hoodie"],
+            "Shirt": [r"셔츠", r"shirt"],
+            "Tee": [r"티셔츠", r"tee"],
+            "Denim": [r"데님", r"청바지", r"denim", r"jean"],
+            "Chino": [r"치노", r"chino"],
+            "Trousers": [r"슬랙스", r"트라우저", r"trouser", r"slacks"],
+            "Easy_pants": [r"이지팬츠", r"easy pants"],
+            "Work_pants": [r"워크팬츠", r"work pants"],
+            "Short": [r"반바지", r"쇼츠", r"shorts?"],
+            "Jacket_Blouson": [r"자켓", r"블루종", r"jacket", r"blouson"],
+            "Coat": [r"코트", r"coat"],
+            "Cardigan": [r"가디건", r"cardigan"],
+            "Jumper_Parka": [r"점퍼", r"파카", r"jumper", r"parka"],
+            "Padding": [r"패딩", r"padding", r"puffer"],
+            "Leather": [r"레더", r"가죽", r"leather"],
+            "Vest": [r"베스트", r"조끼", r"vest"],
+        }
+        neg_markers = ["말고", "제외", "빼고", "빼줘", "빼", "없이", "말아", "not", "without", "except"]
+        text_lower = text.lower()
+
+        llm_target = set(refined.target_detail_cats or [])
+        llm_avoid = set(refined.avoid_detail_cats or [])
+        rule_target = set()
+        rule_avoid = set()
+
+        for detail_cat, patterns in rules.items():
+            for pattern in patterns:
+                for match in re.finditer(pattern, text_lower):
+                    s, e = match.span()
+                    window = text_lower[max(0, s - 8): min(len(text_lower), e + 8)]
+                    is_neg = any(marker in window for marker in neg_markers)
+                    if is_neg:
+                        rule_avoid.add(detail_cat)
+                    else:
+                        rule_target.add(detail_cat)
+
+        final_avoid = llm_avoid | rule_avoid
+        final_target = (llm_target | rule_target) - final_avoid
+
+        refined.avoid_detail_cats = sorted(final_avoid)
+        refined.target_detail_cats = sorted(final_target)
+        return refined
 
     def _build_refine_prompt(self, original_query: str) -> str:
         """쿼리 정제용 프롬프트"""
@@ -338,7 +396,14 @@ class QueryBuilder:
    - 아우터: "Jacket_Blouson", "Coat", "Cardigan", "Jumper_Parka", "Padding", "Leather", "Vest"
    - 예: 사용자가 "니트로 바꿔줘"라고 하면 ["Knitwear"]
 
-8. **prefer_brightness**: 색상 밝기 선호 (문자열 또는 null)
+8. **avoid_detail_cats**: 제외할 의류 세부 카테고리 (배열)
+   - 반드시 아래 목록에서만 선택 (없으면 빈 배열):
+   - 상의: "Tee", "Shirt", "Sweatshirt", "Knitwear"
+   - 하의: "Denim", "Chino", "Trousers", "Easy_pants", "Work_pants", "Short"
+   - 아우터: "Jacket_Blouson", "Coat", "Cardigan", "Jumper_Parka", "Padding", "Leather", "Vest"
+   - 예: "니트 말고 다른 걸로" -> ["Knitwear"]
+
+9. **prefer_brightness**: 색상 밝기 선호 (문자열 또는 null)
    - "light": 밝은색 선호 (밝은, 화사한, 연한, 파스텔 등)
    - "dark": 어두운색 선호 (어두운, 진한, 무거운 등)
    - null: 밝기 언급 없음
@@ -354,6 +419,7 @@ class QueryBuilder:
   "requirements_en": ["requirement1 in English", "requirement2 in English"],
   "constraints": ["제한사항1"],
   "target_detail_cats": ["세부카테고리1"],
+  "avoid_detail_cats": ["제외카테고리1"],
   "prefer_brightness": "light" 또는 "dark" 또는 null
 }}
 
@@ -368,6 +434,7 @@ class QueryBuilder:
   "requirements_en": ["casual spring date outfit"],
   "constraints": [],
   "target_detail_cats": [],
+  "avoid_detail_cats": [],
   "prefer_brightness": null
 }}
 
@@ -381,6 +448,7 @@ class QueryBuilder:
   "requirements_en": ["comfortable office wear"],
   "constraints": ["검은색 제외"],
   "target_detail_cats": [],
+  "avoid_detail_cats": [],
   "prefer_brightness": null
 }}
 
@@ -394,6 +462,7 @@ class QueryBuilder:
   "requirements_en": ["bright colored knit sweater"],
   "constraints": [],
   "target_detail_cats": ["Knitwear"],
+  "avoid_detail_cats": [],
   "prefer_brightness": "light"
 }}
 
@@ -407,6 +476,7 @@ class QueryBuilder:
   "requirements_en": ["knit sweater"],
   "constraints": [],
   "target_detail_cats": ["Knitwear"],
+  "avoid_detail_cats": [],
   "prefer_brightness": null
 }}
 
@@ -420,6 +490,7 @@ class QueryBuilder:
   "requirements_en": ["hoodie sweatshirt"],
   "constraints": [],
   "target_detail_cats": ["Sweatshirt"],
+  "avoid_detail_cats": [],
   "prefer_brightness": null
 }}
 
@@ -433,7 +504,22 @@ class QueryBuilder:
   "requirements_en": ["dark colored clothing"],
   "constraints": [],
   "target_detail_cats": [],
+  "avoid_detail_cats": [],
   "prefer_brightness": "dark"
+}}
+
+입력: "니트 말고 다른걸로 바꿔줘"
+출력:
+{{
+  "mood": [],
+  "time": null,
+  "location": null,
+  "requirements": ["상의 변경"],
+  "requirements_en": ["different top item"],
+  "constraints": ["니트 제외"],
+  "target_detail_cats": [],
+  "avoid_detail_cats": ["Knitwear"],
+  "prefer_brightness": null
 }}
 """
 

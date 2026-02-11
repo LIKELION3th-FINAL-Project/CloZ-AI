@@ -79,7 +79,8 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         user_id: str,
         context: Optional[Dict[str, Any]] = None,
         target_categories: Optional[List[str]] = None,
-        target_detail_cats: Optional[List[str]] = None
+        target_detail_cats: Optional[List[str]] = None,
+        avoid_detail_cats: Optional[List[str]] = None,
     ) -> WardrobeCheckResult:
         """
         옷장에서 요구사항을 충족하는 재생성 후보 찾기
@@ -100,10 +101,10 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.5
             )
 
-        # 1. 쿼리 텍스트 결합
+        # 쿼리 텍스트 결합
         query_text = " ".join(requirements) if requirements else "casual outfit"
 
-        # 2. FashionCLIP으로 쿼리 임베딩 생성
+        # FashionCLIP으로 쿼리 임베딩 생성
         try:
             query_embedding = self.embedder.embed_text(query_text)
         except Exception as e:
@@ -114,41 +115,98 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.0
             )
 
-        # 3. ChromaDB 유사도 검색
-        try:
-            # 필터링 구성
-            where_filter = None
-            filters = []
+        # ChromaDB 유사도 검색 + 4. 소수 아이템 bypass/threshold 필터링
+        candidates = []
+        all_similarities = []
+        bypass_details = []
+        seen_ids = set()
+        total_results = 0
+        avoid_detail_lower = {str(x).strip().lower() for x in (avoid_detail_cats or []) if str(x).strip()}
 
-            # user_id 필터 (필수)
+        def _make_where_filter(detail_cat: Optional[str] = None):
+            filters = []
             if user_id:
                 filters.append({"user_id": user_id})
-
-            # broad_cat 필터 (대분류)
             if target_categories:
                 if len(target_categories) == 1:
                     filters.append({"broad_cat": target_categories[0]})
                 else:
                     filters.append({"$or": [{"broad_cat": cat} for cat in target_categories]})
+            if detail_cat:
+                filters.append({"detail_cat": detail_cat})
+            elif target_detail_cats and len(target_detail_cats) == 1:
+                filters.append({"detail_cat": target_detail_cats[0]})
 
-            # detail_cat 필터 (세부분류) - 있으면 추가
-            if target_detail_cats:
-                if len(target_detail_cats) == 1:
-                    filters.append({"detail_cat": target_detail_cats[0]})
-                else:
-                    filters.append({"$or": [{"detail_cat": cat} for cat in target_detail_cats]})
-
-            # 필터 결합
             if len(filters) == 1:
-                where_filter = filters[0]
-            elif len(filters) > 1:
-                where_filter = {"$and": filters}
+                return filters[0]
+            if len(filters) > 1:
+                return {"$and": filters}
+            return None
 
-            results = self.wardrobe_collection.query(
-                query_embeddings=[query_embedding],
-                n_results=20,  # 충분한 후보 가져오기
-                where=where_filter
-            )
+        def _collect_from_results(results: Dict[str, Any], bypass_threshold: bool):
+            local_candidates = []
+            local_sims = []
+            count = len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0
+            if count == 0:
+                return local_candidates, local_sims, count
+
+            for i, distance in enumerate(results['distances'][0]):
+                similarity = 1 - distance
+                local_sims.append(similarity)
+                if bypass_threshold or similarity >= self.threshold:
+                    cid = results['ids'][0][i]
+                    if cid in seen_ids:
+                        continue
+                    meta = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
+                    detail_cat = str(meta.get("detail_cat", "")).strip().lower()
+                    if avoid_detail_lower and detail_cat in avoid_detail_lower:
+                        continue
+                    seen_ids.add(cid)
+                    local_candidates.append({
+                        'id': cid,
+                        'similarity': similarity,
+                        'metadata': meta
+                    })
+            return local_candidates, local_sims, count
+
+        try:
+            # detail_cat 복수 지정 시 카테고리별로 분리 검색/분리 bypass 적용
+            if target_detail_cats and len(target_detail_cats) > 1:
+                for detail_cat in target_detail_cats:
+                    results = self.wardrobe_collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=20,
+                        where=_make_where_filter(detail_cat=detail_cat),
+                    )
+                    detail_total = len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0
+                    total_results += detail_total
+                    detail_bypass = detail_total <= 3
+                    if detail_bypass and detail_total > 0:
+                        bypass_details.append(f"{detail_cat}:{detail_total}")
+                        print(
+                            f"  [INFO] 세부카테고리 '{detail_cat}' 결과 {detail_total}개 (<=3) "
+                            "→ 임베딩 비교 생략, 전부 반환"
+                        )
+                    part_candidates, part_sims, _ = _collect_from_results(results, detail_bypass)
+                    candidates.extend(part_candidates)
+                    all_similarities.extend(part_sims)
+            else:
+                results = self.wardrobe_collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=20,
+                    where=_make_where_filter(),
+                )
+                total_results = len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0
+                bypass_threshold = bool(target_detail_cats) and total_results <= 3
+                if bypass_threshold and total_results > 0:
+                    bypass_details.append(f"all:{total_results}")
+                    print(f"  [INFO] 세부카테고리 결과 {total_results}개 (<=3) → 임베딩 비교 생략, 전부 반환")
+                part_candidates, part_sims, _ = _collect_from_results(results, bypass_threshold)
+                candidates.extend(part_candidates)
+                all_similarities.extend(part_sims)
+
+            if all_similarities:
+                print(f"  [DEBUG] 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
         except Exception as e:
             return WardrobeCheckResult(
                 is_possible=False,
@@ -157,44 +215,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 confidence=0.0
             )
 
-        # 4. 소수 아이템 바이패스 또는 Threshold 필터링
-        candidates = []
-        all_similarities = []  # 디버깅용
-        total_results = len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0
-
-        # 세부카테고리 필터 적용 시, 결과가 3개 이하면 임베딩 비교 없이 전부 반환
-        # (사용자 옷장에 해당 카테고리 옷이 적으면 선택지를 제한하지 않음)
-        bypass_threshold = target_detail_cats and total_results <= 3
-
-        if bypass_threshold and total_results > 0:
-            print(f"  [INFO] 세부카테고리 결과 {total_results}개 (<=3) → 임베딩 비교 생략, 전부 반환")
-            for i in range(total_results):
-                similarity = 1 - results['distances'][0][i]
-                candidates.append({
-                    'id': results['ids'][0][i],
-                    'similarity': similarity,
-                    'metadata': results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
-                })
-        elif results['ids'] and results['ids'][0] and results['distances'] and results['distances'][0]:
-            for i, distance in enumerate(results['distances'][0]):
-                # ChromaDB cosine distance: 1 - cosine_similarity
-                # 따라서 similarity = 1 - distance
-                similarity = 1 - distance
-
-                all_similarities.append(similarity)
-
-                if similarity >= self.threshold:
-                    candidates.append({
-                        'id': results['ids'][0][i],
-                        'similarity': similarity,
-                        'metadata': results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
-                    })
-
-            # 디버깅: 유사도 범위 출력
-            if all_similarities:
-                print(f"  [DEBUG] 유사도 범위: {min(all_similarities):.3f} ~ {max(all_similarities):.3f}")
-
-        # 5. 이전 추천 아이템 필터링 (중복 제거)
+        # 이전 추천 아이템 필터링 (중복 제거)
         previous_items = []
         if context and 'previous_items' in context:
             previous_items = context['previous_items']
@@ -202,15 +223,39 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         if previous_items and candidates:
             candidates = self._filter_previous_items(candidates, previous_items)
 
-        # 6. 결과 반환
+        # 부정 카테고리 기반 요청에서 후보가 과소(<=1)하면
+        # 동일 파트 내 비제외 카테고리로 fallback 확장한다.
+        if avoid_detail_lower and target_categories and len(target_categories) == 1 and len(candidates) <= 1:
+            try:
+                fallback_results = self.wardrobe_collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=50,
+                    where=_make_where_filter(detail_cat=None),
+                )
+                fallback_candidates, _, _ = _collect_from_results(fallback_results, bypass_threshold=True)
+                if previous_items and fallback_candidates:
+                    fallback_candidates = self._filter_previous_items(fallback_candidates, previous_items)
+                # 기존 후보 유지 + 중복 제거 후 확장
+                merged = {c["id"]: c for c in candidates}
+                for c in fallback_candidates:
+                    merged.setdefault(c["id"], c)
+                candidates = list(merged.values())
+            except Exception:
+                pass
+
+        # 결과 반환
         is_possible = len(candidates) > 0
         confidence = sum(c['similarity'] for c in candidates) / len(candidates) if candidates else 0.0
 
         # matching_items는 아이템 ID 문자열 리스트로 반환
         matching_items_ids = [c['id'] for c in candidates]
+        candidate_pool = self._build_candidate_pool(candidates)
 
-        if bypass_threshold:
-            reason = f"검색 완료: {len(candidates)}개 후보 (세부카테고리 {total_results}개 이하 → 전부 반환)"
+        if bypass_details:
+            reason = (
+                f"검색 완료: {len(candidates)}개 후보 "
+                f"(detail별 bypass 적용: {', '.join(bypass_details)})"
+            )
         else:
             reason = f"검색 완료: {len(candidates)}개 후보 (threshold={self.threshold})"
         if previous_items:
@@ -219,9 +264,36 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         return WardrobeCheckResult(
             is_possible=is_possible,
             matching_items=matching_items_ids,
+            candidate_pool=candidate_pool,
             reason=reason,
             confidence=confidence
         )
+
+    def _build_candidate_pool(self, candidates: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+        pool: Dict[str, List[str]] = {}
+        for candidate in candidates:
+            cid = str(candidate.get("id", ""))
+            filename = cid.split("/")[-1] if "/" in cid else cid.split(":")[-1]
+            meta = candidate.get("metadata", {}) or {}
+            broad = str(meta.get("broad_cat", "")).lower()
+
+            cat = None
+            if broad in {"shirt", "top", "tops", "상의"}:
+                cat = "TOP"
+            elif broad in {"pant", "pants", "bottom", "bottoms", "바지", "하의"}:
+                cat = "BOTTOM"
+            elif broad in {"outer", "outers", "아우터"}:
+                cat = "OUTER"
+            elif "shirt/" in cid or "tops_" in cid:
+                cat = "TOP"
+            elif "pant/" in cid or "bottoms_" in cid:
+                cat = "BOTTOM"
+            elif "outer/" in cid or "outers_" in cid:
+                cat = "OUTER"
+
+            if cat and filename:
+                pool.setdefault(cat, []).append(filename)
+        return pool
 
     def _filter_previous_items(
         self,
@@ -229,59 +301,36 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         previous_items: List[str]
     ) -> List[Dict]:
         """
-        이전에 추천된 아이템과 너무 유사한 것 제거
+        이전 추천과 동일한 아이템(ID/파일명)만 제거
 
-        Args:
-            candidates: 현재 후보 리스트
-            previous_items: 이전 추천 아이템 ID 리스트
-
-        Returns:
-            필터링된 후보 리스트
+        유사도 기반 제거는 같은 카테고리 후보(예: 다른 니트/다른 데님)까지
+        과도하게 제외할 수 있으므로 exact match만 제외한다.
         """
-        if not previous_items or not self.wardrobe_collection:
+        if not previous_items:
             return candidates
 
-        try:
-            # 이전 아이템 임베딩 가져오기
-            previous_embeddings_result = self.wardrobe_collection.get(
-                ids=previous_items,
-                include=['embeddings']
-            )
-
-            if not previous_embeddings_result['embeddings']:
-                return candidates
-
-            previous_embeddings = previous_embeddings_result['embeddings']
-
-            # 현재 후보와 이전 아이템 간 유사도 계산
-            filtered = []
-            for candidate in candidates:
-                # 후보 아이템 임베딩 가져오기
-                candidate_result = self.wardrobe_collection.get(
-                    ids=[candidate['id']],
-                    include=['embeddings']
-                )
-
-                if not candidate_result['embeddings']:
-                    continue
-
-                candidate_embedding = candidate_result['embeddings'][0]
-
-                # 이전 아이템과의 최대 유사도 계산
-                max_similarity_to_previous = 0
-                for prev_emb in previous_embeddings:
-                    sim = self._cosine_similarity(candidate_embedding, prev_emb)
-                    max_similarity_to_previous = max(max_similarity_to_previous, sim)
-
-                # Threshold 이하만 유지 (90% 이상 유사하면 제외)
-                if max_similarity_to_previous < 0.9:
-                    filtered.append(candidate)
-
-            return filtered
-
-        except Exception as e:
-            print(f"[경고] 이전 아이템 필터링 실패: {e}")
+        previous_names = {self._normalize_item_name(x) for x in previous_items if x}
+        if not previous_names:
             return candidates
+
+        filtered = []
+        for candidate in candidates:
+            candidate_name = self._normalize_item_name(candidate.get("id", ""))
+            if candidate_name in previous_names:
+                continue
+            filtered.append(candidate)
+
+        return filtered
+
+    def _normalize_item_name(self, raw: str) -> str:
+        text = str(raw or "").strip()
+        if not text:
+            return text
+        if ":" in text:
+            text = text.split(":")[-1]
+        if "/" in text:
+            text = text.split("/")[-1]
+        return text.lower()
 
     def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
         """코사인 유사도 계산"""

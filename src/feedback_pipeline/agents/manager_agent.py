@@ -9,10 +9,11 @@ Manager Agent
 3. REGENERATE 시 Generation Model 호출
 4. 세션 로그 기록
 
-LLM: gpt-4o-mini (빠른 응답, 결정론적)
+LLM: gemini-3-flash-preview
 """
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -116,7 +117,7 @@ class ManagerAgent:
         self.config = config or ManagerConfig()
         self.storage = storage or JsonStorage()
 
-        # LLM 초기화 (gpt-4o-mini)
+        # LLM 초기화
         self.llm = llm or LLMFactory.create_manager_agent_llm()
 
         # 외부 인터페이스 (임베딩 기반 구현체 우선 사용)
@@ -290,11 +291,11 @@ class ManagerAgent:
                 reasoning="Session not found"
             )
 
-        # 1. YES 피드백 → APPROVED
+        # YES 피드백 → APPROVED
         if feedback.is_positive:
             return self._handle_positive_feedback(session, feedback)
 
-        # 2. NO 피드백 → LLM 분석
+        # NO 피드백 → LLM 분석
         return self._handle_negative_feedback(session, feedback)
 
     def _handle_positive_feedback(
@@ -364,13 +365,13 @@ class ManagerAgent:
         )
         session.add_entry(entry)
 
-        # 1. [수정] 재생성 횟수 체크 (먼저!)
+        # [수정] 재생성 횟수 체크 (먼저!)
         regenerate_count = self._get_regenerate_count(session)
         if regenerate_count >= self.config.max_regenerate_count:
             # 히스토리 종합해서 바로 BUYING (LLM 판단 스킵)
             decision = self._create_buying_decision_with_history(session, feedback)
         else:
-            # 2. 지능형 컨텍스트 분석 (ContextAnalyzer 사용)
+            # 지능형 컨텍스트 분석 (ContextAnalyzer 사용)
             analysis = self.context_analyzer.analyze_session_context(session, feedback)
 
             if not analysis["is_clear"]:
@@ -511,6 +512,18 @@ class ManagerAgent:
         refined_query_text = combined_query.combined_text
         structured_info = combined_query.refined_query  # QueryBuilder의 구조화된 정보 활용
 
+        # LLM 결합 단계에서 부정문이 희석되는 경우를 방지하기 위해
+        # 최신 피드백 원문 기준으로 제외 카테고리를 보강한다.
+        raw_avoid_detail_cats = self._extract_avoid_detail_cats_from_feedback(feedback.feedback_text)
+        if structured_info and raw_avoid_detail_cats:
+            existing_avoid = set(getattr(structured_info, "avoid_detail_cats", []) or [])
+            structured_info.avoid_detail_cats = sorted(existing_avoid | raw_avoid_detail_cats)
+            if getattr(structured_info, "target_detail_cats", None):
+                avoid_lower = {x.lower() for x in structured_info.avoid_detail_cats}
+                structured_info.target_detail_cats = [
+                    x for x in structured_info.target_detail_cats if x.lower() not in avoid_lower
+                ]
+
         # 재생성 횟수 체크
         regenerate_count = self._get_regenerate_count(session)
 
@@ -531,6 +544,19 @@ class ManagerAgent:
             target_detail_cats = None
             if structured_info and hasattr(structured_info, 'target_detail_cats') and structured_info.target_detail_cats:
                 target_detail_cats = structured_info.target_detail_cats
+            avoid_detail_cats = None
+            if structured_info and hasattr(structured_info, 'avoid_detail_cats') and structured_info.avoid_detail_cats:
+                avoid_detail_cats = structured_info.avoid_detail_cats
+
+            # 충돌 정리: 동일 카테고리가 include/avoid에 동시에 있으면 avoid 우선
+            if target_detail_cats and avoid_detail_cats:
+                avoid_set = {x.lower() for x in avoid_detail_cats}
+                target_detail_cats = [x for x in target_detail_cats if x.lower() not in avoid_set]
+                if not target_detail_cats:
+                    target_detail_cats = None
+
+            # 피드백 범위 -> 옷장 broad_cat 매핑
+            target_categories = self._to_wardrobe_target_categories(feedback)
 
             # 정제된 쿼리로 옷장 검색
             check_result = self.wardrobe_checker.can_fulfill(
@@ -542,12 +568,14 @@ class ManagerAgent:
                     "constraints": constraints,
                     "avoid_attributes": avoid_attributes
                 },
-                target_detail_cats=target_detail_cats
+                target_categories=target_categories,
+                target_detail_cats=target_detail_cats,
+                avoid_detail_cats=avoid_detail_cats
             )
 
             if check_result.is_possible:
                 return self._create_regenerate_decision_v2(
-                    session, feedback, refined_query_text, regenerate_count, structured_info
+                    session, feedback, refined_query_text, regenerate_count, structured_info, check_result
                 )
             else:
                 return self._create_buying_decision_v2(
@@ -557,6 +585,60 @@ class ManagerAgent:
         return self._create_regenerate_decision_v2(
             session, feedback, refined_query_text, regenerate_count, structured_info
         )
+
+    def _extract_avoid_detail_cats_from_feedback(self, feedback_text: str) -> set:
+        text = (feedback_text or "").lower()
+        if not text:
+            return set()
+        neg_markers = ["말고", "제외", "빼고", "빼줘", "빼", "없이", "not", "without", "except"]
+        if not any(marker in text for marker in neg_markers):
+            return set()
+
+        rules = {
+            "Knitwear": [r"니트", r"knit"],
+            "Sweatshirt": [r"맨투맨", r"스웨트", r"후드", r"후드티", r"sweatshirt", r"hoodie"],
+            "Shirt": [r"셔츠", r"shirt"],
+            "Tee": [r"티셔츠", r"tee"],
+            "Denim": [r"데님", r"청바지", r"denim", r"jean"],
+            "Chino": [r"치노", r"chino"],
+            "Trousers": [r"슬랙스", r"트라우저", r"trouser", r"slacks"],
+            "Easy_pants": [r"이지팬츠", r"easy pants"],
+            "Work_pants": [r"워크팬츠", r"work pants"],
+            "Short": [r"반바지", r"쇼츠", r"shorts?"],
+            "Jacket_Blouson": [r"자켓", r"블루종", r"jacket", r"blouson"],
+            "Coat": [r"코트", r"coat"],
+            "Cardigan": [r"가디건", r"cardigan"],
+            "Jumper_Parka": [r"점퍼", r"파카", r"jumper", r"parka"],
+            "Padding": [r"패딩", r"padding", r"puffer"],
+            "Leather": [r"레더", r"가죽", r"leather"],
+            "Vest": [r"베스트", r"조끼", r"vest"],
+        }
+        extracted = set()
+        for detail_cat, patterns in rules.items():
+            for pattern in patterns:
+                for match in re.finditer(pattern, text):
+                    s, e = match.span()
+                    window = text[max(0, s - 8): min(len(text), e + 8)]
+                    if any(marker in window for marker in neg_markers):
+                        extracted.add(detail_cat)
+                        break
+                if detail_cat in extracted:
+                    break
+        return extracted
+
+    def _normalized_feedback_scopes(self, feedback: FeedbackInput) -> List[FeedbackScope]:
+        return feedback.feedback_scopes or [FeedbackScope.FULL]
+
+    def _feedback_scope_values(self, feedback: FeedbackInput) -> List[str]:
+        return [scope.value for scope in self._normalized_feedback_scopes(feedback)]
+
+    def _to_wardrobe_target_categories(self, feedback: FeedbackInput) -> Optional[List[str]]:
+        scope_values = set(self._feedback_scope_values(feedback))
+        if "FULL" in scope_values:
+            return None
+        mapping = {"TOP": "tops", "BOTTOM": "bottoms", "OUTER": "outers"}
+        mapped = [mapping[s] for s in scope_values if s in mapping]
+        return mapped or None
 
     def _collect_session_feedbacks(self, session: SessionLog) -> List[str]:
         """세션 내 모든 피드백 텍스트 수집"""
@@ -573,7 +655,8 @@ class ManagerAgent:
         feedback: FeedbackInput,
         refined_query: str,
         regenerate_count: int,
-        structured_info: Optional[Any] = None
+        structured_info: Optional[Any] = None,
+        check_result: Optional[Any] = None,
     ) -> ManagerDecision:
         """보강된 쿼리를 포함한 REGENERATE 결정"""
         regenerate_data = self._build_regenerate_data(session, feedback)
@@ -582,12 +665,15 @@ class ManagerAgent:
         # 구조화된 정보 추가 (mood, time, location, requirements, constraints)
         if structured_info:
             regenerate_data["structured_query"] = structured_info.to_dict()
+        if check_result and hasattr(check_result, "candidate_pool"):
+            regenerate_data["candidate_pool"] = check_result.candidate_pool
 
         return ManagerDecision(
             action=ActionType.REGENERATE,
             message="분석된 취향을 반영해서 새로운 코디를 찾아볼게요!",
             reasoning=f"Context refined: {refined_query}",
             extracted_requirements=[refined_query],
+            target_categories=self._feedback_scope_values(feedback),
             payload={"regenerate_data": regenerate_data}
         )
 
@@ -600,11 +686,15 @@ class ManagerAgent:
         structured_info: Optional[Any] = None
     ) -> ManagerDecision:
         """보강된 쿼리를 포함한 BUYING 결정"""
-        primary_scope = feedback.feedback_scopes[0] if feedback.feedback_scopes else FeedbackScope.FULL
+        scopes = self._normalized_feedback_scopes(feedback)
+        primary_scope = scopes[0]
+        # 복수 파트 BUYING은 단일 카테고리 강제를 피한다.
+        scope_for_buying = primary_scope if len(scopes) == 1 else FeedbackScope.FULL
 
         # 구조화된 정보도 context로 전달
         context = {
-            "avoid_attributes": avoid_attributes
+            "avoid_attributes": avoid_attributes,
+            "feedback_scopes": [s.value for s in scopes],
         }
         if structured_info:
             context["structured_query"] = structured_info.to_dict()
@@ -612,7 +702,7 @@ class ManagerAgent:
         buying_result = self.buying_trigger.recommend(
             original_prompt=session.context.get("original_prompt", ""),
             feedback_text=refined_query,  # 보강된 쿼리 사용
-            feedback_scope=primary_scope,
+            feedback_scope=scope_for_buying,
             current_outfit=feedback.current_outfit,
             limit=5,
             context=context  # 구조화된 정보 전달
@@ -643,7 +733,7 @@ class ManagerAgent:
             message="피드백을 반영해서 새로운 코디를 준비할게요!",
             reasoning=f"Wardrobe has matching items. Regenerate attempt {regenerate_count + 1}/{self.config.max_regenerate_count}",
             extracted_requirements=requirements,
-            target_categories=[s.value for s in feedback.feedback_scopes] if feedback.feedback_scopes else [],
+            target_categories=self._feedback_scope_values(feedback),
             payload={"regenerate_data": regenerate_data}
         )
 
@@ -665,7 +755,7 @@ class ManagerAgent:
 
         # BuyingTrigger로 상품 추천
         # 복수 scope 중 첫 번째 사용 (BUYING은 단일 scope 기반 필터링)
-        primary_scope = feedback.feedback_scopes[0] if feedback.feedback_scopes else FeedbackScope.FULL
+        primary_scope = self._normalized_feedback_scopes(feedback)[0]
 
         buying_result = self.buying_trigger.recommend(
             original_prompt=session.context.get("original_prompt", ""),
@@ -715,7 +805,7 @@ class ManagerAgent:
         # 세션에서 대화 히스토리 추출
         entries = session.entries
 
-        # 1. 모든 피드백 수집 (순서대로)
+        # 모든 피드백 수집 (순서대로)
         feedback_list = []
         for entry in entries:
             if entry.entry_type == "feedback" and not entry.content.get("is_positive"):
@@ -727,9 +817,9 @@ class ManagerAgent:
                         "text": fb_text
                     })
 
-        # 2. 현재 피드백도 추가 (중복 방지)
+        # 현재 피드백도 추가 (중복 방지)
         current_fb = {
-            "scopes": [s.value for s in (feedback.feedback_scopes or [FeedbackScope.FULL])],
+            "scopes": self._feedback_scope_values(feedback),
             "text": feedback.feedback_text
         }
         if current_fb not in feedback_list:
@@ -739,11 +829,11 @@ class ManagerAgent:
             "feedback": feedback_list
         }
 
-        # 3. ASK_MORE 질문/답변 쌍만 clarifications로
+        # ASK_MORE 질문/답변 쌍만 clarifications로
         clarifications = []
         ask_more_exists = False
 
-        # 4. ASK_MORE 질문/답변 쌍 추출
+        # ASK_MORE 질문/답변 쌍 추출
         for i, entry in enumerate(entries):
             if entry.entry_type == "action" and entry.content.get("action") == "ASK_MORE":
                 ask_more_exists = True
@@ -813,7 +903,7 @@ class ManagerAgent:
         buying_result = None
         if self.config.enable_buying_recommendation:
             # 복수 scope 중 첫 번째 사용
-            primary_scope = feedback.feedback_scopes[0] if feedback.feedback_scopes else FeedbackScope.FULL
+            primary_scope = self._normalized_feedback_scopes(feedback)[0]
 
             buying_result = self.buying_trigger.recommend(
                 original_prompt=session.context.get("original_prompt", ""),

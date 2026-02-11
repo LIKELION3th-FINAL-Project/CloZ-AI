@@ -18,21 +18,22 @@ if __name__ == "__main__":
     num_of_show = generation_config_file["num_of_show"]
     cat_map_planner = generation_config_file["cat_to_db"]
     
-    model_resp_json_file = load_json(result_root_path)
-    
     understand_model = UnderstandModel()
     encoder = CLIPEncoder()
     recommender = FashionRecommender(encoder)
     planner = OutfitPlanner(encoder)
     vton = VTONManager()
+    
     test_user_prompt = "오늘 홍대 가서 친구들이랑 놀건데 어떻게 입을까?"
     model_result = understand_model.chat(test_user_prompt)
-    model_result_json = extract_json_format(model_result)
-    make_json_file(model_result_json)
+    model_result_json = extract_json_format(model_result) # 문자열 -> 딕셔너리 포맷만 추출
+    # make_json_file(model_result_json) # 문자열(딕셔너리 포맷) -> 딕셔너리로 변환
+    model_resp_json_file = load_json(result_root_path)
     
     recommender.load_user_wardrobe()
     recommender.load_styles()
     
+    # user prompt 하나 당
     for idx, test in enumerate(model_resp_json_file):
         logger.info("\n" + "=" * 60)
         logger.info(f"User Prompt: {test_user_prompt}")
@@ -47,7 +48,7 @@ if __name__ == "__main__":
         Visualizer.show_recommendations(recs, top_k = item_top_k)
         
         # 2. 조합 생성
-        logger.info(f"\n5. 조합 생성 및 평가")
+        logger.info(f"조합 생성 및 평가")
         combos = planner.generate_combinations(recs, top_n = combination_top_k)
         
         if combos:

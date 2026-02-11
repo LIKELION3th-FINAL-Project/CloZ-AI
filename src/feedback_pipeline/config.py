@@ -60,17 +60,16 @@ class EmbeddingConfig:
     """임베딩 설정"""
     # FashionCLIP 모델
     MODEL_NAME: str = "patrickjohncyh/fashion-clip"
-    
+
     # 유사도 임계값
     WARDROBE_THRESHOLD: float = 0.2   # 옷장 검색
-    MUSINSA_THRESHOLD: float = 0.15   # 무신사 검색
-    
+
     # 배치 크기
     BATCH_SIZE: int = 32              # CPU 기준, GPU면 128 권장
-    
+
     # ChromaDB 컬렉션 이름
     WARDROBE_COLLECTION: str = "wardrobe"
-    MUSINSA_COLLECTION: str = "musinsa"
+    PRODUCTS_COLLECTION: str = "products"  # 하바티 상품
 
 
 @dataclass

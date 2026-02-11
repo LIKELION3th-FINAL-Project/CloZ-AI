@@ -27,7 +27,7 @@ class FashionRecommender:
         """ChromaDB 캐시를 활용하여 옷장 아이템 로드 (로컬 폴더 tops/bottoms/outers 대응)"""
         try:
             client = chromadb.PersistentClient(path = self.config["chromadb_user_war_embedding_dir"])
-            col = client.get_or_create_collection(name=collection_name)
+            col = client.get_or_create_collection(name = collection_name)
         except Exception as e:
             logger.error(f"ChromaDB 로드 실패: {e}")
             return {}
@@ -76,7 +76,7 @@ class FashionRecommender:
 
                 self.item_db[f] = {"id": db_id, "category": kor_cat, "path": full_path, "embedding": emb_tensor.cpu()}
 
-        print(f"[Wardrobe] Loaded {len(self.item_db)} items. (Chroma: {loaded_from}, New: {new_encoded})")
+        logger.info(f"Loaded {len(self.item_db)} items. (Chroma: {loaded_from}, New: {new_encoded})")
         return self.item_db
 
     def load_styles(self):
@@ -95,7 +95,7 @@ class FashionRecommender:
                 style_dict[style_name].append(torch.tensor(emb))
             self.style_profiles = {k: torch.stack(v) for k, v in style_dict.items()}
             logger.info(f"[ChromaDB] Total styles loaded: {len(self.style_profiles)}")
-        except Exception as e: print(f"스타일 로드 실패: {e}")
+        except Exception as e: logger.error(f"스타일 로드 실패: {e}")
 
     # ========== 신규 헬퍼 함수들 (고도화 로직) ==========
     def _build_context_text(self, agent_json: Dict) -> str:
@@ -177,7 +177,8 @@ class FashionRecommender:
         for cat in target_cats:
             candidates = []
             for f_name, data in self.item_db.items():
-                if data['category'] != cat: continue
+                if data['category'] != cat: 
+                    continue
 
                 text_sim = float((q_emb * data['embedding']).sum())
                 style_sim = self._calculate_multi_style_similarity(data['embedding'], styles)

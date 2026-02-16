@@ -1,16 +1,24 @@
-user_clothes_dir: "../../data/user_wardrobe_image"
-user_top_image: "../../data/user_wardrobe_image/tops"
-user_bottom_image: "../../data/user_wardrobe_image/bottoms"
-user_outer_image: "../../data/user_wardrobe_image/outers"
-chroma_db_path: "../../data/chromadb_embeddings/"
-chromadb_ref_embedding_dir: "../../data/chromadb_reference/" # 레퍼런스 임베딩
-chromadb_user_war_embedding_dir: "../../data/chromadb_mycloset" # 사용자 옷장 임베딩
-model_name: "patrickjohncyh/fashion-clip"
-user_body_image: "../../data/user_body_image/body_image.png"
-use_fp16: True
-item_top_k: 3
+cat_to_db:
+  상의: shirt
+  아우터: outer
+  하의: pant
+chroma_db_path: data/chroma_db
+chromadb_ref_embedding_dir: data/chromadb_ref
+chromadb_user_war_embedding_dir: data/chroma_wardrobe
 combination_top_k: 3
+folder_map:
+  bottoms: 하의
+  outers: 아우터
+  tops: 상의
+  상의: 상의
+  아우터: 아우터
+  하의: 하의
+item_top_k: 3
+model_name: patrickjohncyh/fashion-clip
 num_of_show: 3
-
-folder_map: {"tops": "상의", "bottoms": "하의", "outers": "아우터", "상의": "상의", "하의": "하의", "아우터": "아우터"}
-cat_to_db: {"상의": "shirt", "하의": "pant", "아우터": "outer"}
+use_fp16: true
+user_body_image: data/sample_body.png
+user_bottom_image: closet_mj/bottoms
+user_clothes_dir: closet_mj
+user_outer_image: closet_mj/outers
+user_top_image: closet_mj/tops

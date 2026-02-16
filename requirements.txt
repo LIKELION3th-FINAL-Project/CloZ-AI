@@ -1,17 +1,40 @@
-ruff == 0.14.14
-pytest == 9.0.2
-requests == 2.32.5
-accelerate == 1.12.0
-transformers == 4.57.6
-loguru == 0.7.3
-torch >= 2.0.0
-torchvision >= 0.15.0
-transformers >= 4.36.0
-pillow >= 10.0.0
-matplotlib >= 3.7.0
-numpy >= 1.24.0
-chromadb == 1.4.1
-pydantic == 2.12.3
+# CloZ-AI Unified Pipeline Dependencies
+
+# Core
+python-dotenv>=1.0.0
+loguru>=0.7.3
+pydantic>=2.0.0
 pydantic-settings
-tqdm >= 4.65.0
-ipywidgets >= 8.0.0
+
+# LLM
+openai>=1.0.0
+google-generativeai>=0.3.0
+requests>=2.28.0
+
+# ML / Embedding
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.36.0
+accelerate>=1.0.0
+huggingface_hub>=0.20.0
+fashn-human-parser>=0.1.1
+git+https://github.com/fashn-AI/fashn-vton-1.5.git
+
+# Vector DB
+chromadb>=1.0.0
+
+# Image Processing
+Pillow>=10.0.0
+matplotlib>=3.7.0
+rembg>=2.0.0
+
+# Data Processing
+numpy>=1.24.0
+tqdm>=4.65.0
+
+# Dev / Test
+ruff>=0.1.0
+pytest>=9.0.0
+
+# Optional
+# ipywidgets>=8.0.0

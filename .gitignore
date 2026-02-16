@@ -69,3 +69,12 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+
+# opensource
+src/fashn_vton/examples
+src/fashn_vton/src
+src/fashn_vton/tests
+src/fashn_vton/pyproject.toml
+
+# experiments
+note.*

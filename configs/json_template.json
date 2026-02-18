@@ -6,17 +6,7 @@
     },
     "color": {
         "value": [],
-        "confidence": 0.0,
-        "evidence": []
-    },
-    "size_fit": {
-        "value": [],
-        "confidence": 0.0,
-        "evidence": []
-    },
-    "season": {
-        "value": [],
-        "confidence": 0.0,
+        "confidence": 0.0, 
         "evidence": []
     },
     "location": {
@@ -24,7 +14,7 @@
         "confidence": 0.0,
         "evidence": []
     },
-    "mood": {
+    "mood": { 
         "value": [],
         "confidence": 0.0,
         "evidence": []

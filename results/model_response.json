@@ -1,0 +1,42 @@
+{
+  "time_context": {
+    "value": [],
+    "confidence": 0.2,
+    "evidence": []
+  },
+  "color": {
+    "value": [],
+    "confidence": 0.2,
+    "evidence": []
+  },
+  "size_fit": {
+    "value": [],
+    "confidence": 0.2,
+    "evidence": []
+  },
+  "season": {
+    "value": "winter",
+    "confidence": 0.9,
+    "evidence": ["Current date is 2026-02-10, which falls in winter in Korea."]
+  },
+  "location": {
+    "value": "Hongdae, Seoul",
+    "confidence": 0.9,
+    "evidence": ["User explicitly mentioned Hongdae."]
+  },
+  "mood": {
+    "value": "casual, fun, social",
+    "confidence": 0.7,
+    "evidence": ["User wants to hang out with friends, implying a relaxed and enjoyable vibe."]
+  },
+  "user_constraints": {
+    "value": [],
+    "confidence": 0.2,
+    "evidence": []
+  },
+  "user_requirements": {
+    "value": [],
+    "confidence": 0.2,
+    "evidence": []
+  }
+}

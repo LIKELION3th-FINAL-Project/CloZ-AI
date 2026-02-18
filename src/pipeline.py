@@ -232,13 +232,13 @@ class CloZPipeline:
         prompt = input("\n어떤 코디를 추천받고 싶으신가요?\n입력: ").strip()
         if not prompt:
             prompt = "캐주얼 데일리 코디 추천해줘"
-            print(f"기본값 사용: {prompt}")
+            logger.info(f"기본값 사용: {prompt}")
 
-        print("\n코디를 생성하고 있습니다...")
+        logger.info("\n코디를 생성하고 있습니다...")
         result = self.run(prompt, user_id)
 
         if not result["session"]:
-            print(f"\n[오류] {result['generation_result'].message}")
+            logger.error(f"\n[오류] {result['generation_result'].message}")
             return
 
         session = result["session"]
@@ -271,10 +271,10 @@ class CloZPipeline:
             feedback_text = input("\n어떤 점이 마음에 안 드시나요?\n입력: ").strip()
 
             if not feedback_text:
-                print("피드백을 입력해주세요.")
+                logger.info("피드백을 입력해주세요.")
                 continue
 
-            print("\n분석 중...")
+            logger.info("\n분석 중...")
             fb_result = self.process_feedback(
                 session_id=session.session_id,
                 user_id=user_id,
@@ -285,8 +285,8 @@ class CloZPipeline:
             )
 
             decision = fb_result["decision"]
-            print(f"\n[결정]: {decision.action.value}")
-            print(f"[메시지]: {decision.message}")
+            logger.info(f"\n[결정]: {decision.action.value}")
+            logger.info(f"[메시지]: {decision.message}")
 
             if decision.action == ActionType.APPROVED:
                 self.manager.end_session(session.session_id, SessionStatus.COMPLETED)
@@ -294,7 +294,7 @@ class CloZPipeline:
 
             elif decision.action == ActionType.BUYING:
                 if decision.buying_recommendations:
-                    print("\n[상품 추천 목록]:")
+                    logger.info("\n[상품 추천 목록]:")
                     grouped = getattr(decision.buying_recommendations, "grouped_products", None)
                     printed = False
                     if grouped:
@@ -302,13 +302,13 @@ class CloZPipeline:
                             if not group_items:
                                 continue
                             printed = True
-                            print(f"  - [{group_name}]")
+                            logger.info(f"  - [{group_name}]")
                             for i, prod in enumerate(group_items[:3], 1):
                                 if hasattr(prod, "to_dict"):
                                     prod = prod.to_dict()
                                 name = prod.get("product_name", "")
                                 brand = prod.get("brand", "")
-                                print(f"    {i}. {name} ({brand})")
+                                logger.info(f"    {i}. {name} ({brand})")
                     if not printed:
                         recs = getattr(decision.buying_recommendations, "products", [])
                         for i, prod in enumerate(recs, 1):
@@ -316,9 +316,9 @@ class CloZPipeline:
                                 prod = prod.to_dict()
                             name = prod.get("product_name", "")
                             brand = prod.get("brand", "")
-                            print(f"  {i}. {name} ({brand})")
+                            logger.info(f"  {i}. {name} ({brand})")
                         if not recs:
-                            print("  (조건에 맞는 추천 상품이 없습니다)")
+                            logger.info("  (조건에 맞는 추천 상품이 없습니다)")
                 self.manager.end_session(session.session_id, SessionStatus.BUYING_REDIRECT)
                 break
 

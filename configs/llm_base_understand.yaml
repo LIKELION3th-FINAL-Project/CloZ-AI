@@ -13,5 +13,6 @@ model:
   reasoning_effort: "high"
   stream: True
   temperature: 0.2
+  model_generated_answer_path: "./results/model_generated_answer.json"
   
   

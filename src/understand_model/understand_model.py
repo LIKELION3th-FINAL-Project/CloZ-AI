@@ -27,10 +27,10 @@ def extract_json_format(text):
         except json.JSONDecodeError:
             return None
         
-def make_json_file(json_format_string):
+def make_json_file(json_format_string, generated_file_path):
     if json_format_string is None:
         raise ValueError("모델 출력에서 JSON 스트링을 찾지 못했습니다.")
-    with open("model_generated_answer.json", "w", encoding = "utf-8") as f:
+    with open(file_name, "w", encoding = "utf-8") as f:
         json.dump(json_format_string, f, ensure_ascii = False, indent = 2)
     return
 

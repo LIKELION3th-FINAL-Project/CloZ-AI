@@ -104,22 +104,39 @@ class RealGenerationModel(GenerationModelInterface):
         try:
             from src.generation_pipeline.understand_model.understand_model import extract_json_format
 
-            model_result = self.understand_model.chat(prompt)
-            agent_json = extract_json_format(model_result)
+            model_response = self.understand_model.initial_chat(prompt)
+            model_response_json = extract_json_format(model_response)
 
-            if not agent_json:
+            if not model_response_json:
                 return GenerationResult(
                     success=False,
                     message="LLM 의도 파싱 실패",
-                    metadata={"raw_response": model_result}
+                    metadata={"raw_response": model_response}
                 )
-            agent_json = self._normalize_initial_agent_json(agent_json, prompt)
+            
+            required_keys = ["time_context", "location", "mood"]
+            missing_or_low_confidence = []
+            
+            for key in required_keys:
+                field = model_response_json.get(key)
+                value = field.get("value")
+                confidence = field.get("confidence")
+                
+                if value is None or confidence < 0.7:
+                    missing_or_low_confidence.append(key)
+            
+            for missing_key in missing_or_low_confidence:
+                model_response = self.understand_model.request_additional_info_chat(model_response_json, missing_key)
+                model_response_json = extract_json_format(model_response)
+                
+            
+            model_response_json = self._normalize_initial_agent_json(model_response_json, prompt)
 
             # constraints가 있으면 agent_json에 반영
             if constraints:
-                agent_json = self._apply_constraints(agent_json, constraints)
+                model_response_json = self._apply_constraints(model_response_json, constraints)
 
-            return self._run_generation_pipeline(agent_json, user_id)
+            return self._run_generation_pipeline(model_response_json, user_id)
 
         except Exception as e:
             logger.error(f"Generation failed: {e}")
@@ -156,8 +173,8 @@ class RealGenerationModel(GenerationModelInterface):
                 candidate_pool = constraints.get("candidate_pool", {})
             candidate_pool = self._restrict_candidate_pool_to_targets(candidate_pool, target_categories)
 
-            # 피드백 기반 agent_json 재구성
-            agent_json = self._build_agent_json_from_feedback(
+            # 피드백 기반 model_response_json 재구성
+            model_response_json = self._build_agent_json_from_feedback(
                 feedback, structured_query, target_categories
             )
             include_outer = self._should_include_outer(feedback, target_categories, structured_query)
@@ -165,7 +182,7 @@ class RealGenerationModel(GenerationModelInterface):
 
             # 동일 파이프라인 재실행
             return self._run_generation_pipeline(
-                agent_json,
+                model_response_json,
                 user_id="default",
                 exclude_items=self._get_previous_items(original_result),
                 exclude_map=self._build_exclude_map(original_result, target_categories),
@@ -184,7 +201,7 @@ class RealGenerationModel(GenerationModelInterface):
 
     def _run_generation_pipeline(
         self,
-        agent_json: Dict[str, Any],
+        model_response_json: Dict[str, Any],
         user_id: str,
         exclude_items: Optional[List[str]] = None,
         exclude_map: Optional[Dict[str, set]] = None,
@@ -201,7 +218,7 @@ class RealGenerationModel(GenerationModelInterface):
         # 유효 후보가 교집합 단계에서 사라질 수 있어 충분히 크게 조회한다.
         rec_top_k = max(self.item_top_k, 20) if candidate_pool else self.item_top_k
         recs_raw = self.recommender.recommend_from_agent(
-            agent_json, top_k=rec_top_k
+            model_response_json, top_k=rec_top_k
         )
         recs_scope = self._to_scope_recs(recs_raw)
         recs_scope = self._apply_candidate_pool(recs_scope, candidate_pool)
@@ -237,11 +254,11 @@ class RealGenerationModel(GenerationModelInterface):
             )
 
         # context 기반 쿼리 임베딩 생성
-        context_text = self._build_context_text(agent_json)
+        context_text = self._build_context_text(model_response_json)
         avg_q_emb = self.encoder.encode_text(context_text).to(torch.float32)
         avg_q_emb /= (avg_q_emb.norm() + 1e-8)
 
-        target_style = self._extract_target_style(agent_json)
+        target_style = self._extract_target_style(model_response_json)
 
         best_outfits = self.planner.evaluate_outfits(
             combos,
@@ -302,25 +319,25 @@ class RealGenerationModel(GenerationModelInterface):
                 "best_score": best_outfit.get("final_score", 0),
                 "harmony_score": best_outfit.get("harmony_score", 0),
                 "vton_result": vton_result,
-                "agent_json": agent_json,
+                "model_response_json": model_response_json,
             },
         )
 
     def _apply_constraints(
-        self, agent_json: Dict, constraints: Dict
+        self, model_response_json: Dict, constraints: Dict
     ) -> Dict:
         """constraints를 agent_json에 반영"""
         if "colors" in constraints:
-            if "color" not in agent_json:
-                agent_json["color"] = {"value": [], "confidence": 0.8}
-            agent_json["color"]["value"] = constraints["colors"]
+            if "color" not in model_response_json:
+                model_response_json["color"] = {"value": [], "confidence": 0.8}
+            model_response_json["color"]["value"] = constraints["colors"]
 
         if "styles" in constraints:
-            if "style" not in agent_json:
-                agent_json["style"] = {"value": [], "confidence": 0.8}
-            agent_json["style"]["value"] = constraints["styles"]
+            if "style" not in model_response_json:
+                model_response_json["style"] = {"value": [], "confidence": 0.8}
+            model_response_json["style"]["value"] = constraints["styles"]
 
-        return agent_json
+        return model_response_json
 
     def _build_agent_json_from_feedback(
         self,
@@ -328,8 +345,8 @@ class RealGenerationModel(GenerationModelInterface):
         structured_query: Dict,
         target_categories: Optional[List[str]] = None,
     ) -> Dict:
-        """피드백과 구조화된 정보로 agent_json 재구성"""
-        agent_json = {
+        """피드백과 구조화된 정보로 model_response_json 재구성"""
+        model_response_json = {
             "style": {
                 "value": structured_query.get("mood", ["casual"]),
                 "confidence": 0.8,
@@ -346,24 +363,24 @@ class RealGenerationModel(GenerationModelInterface):
 
         location = structured_query.get("location", "")
         if location:
-            agent_json["location"] = {"value": [location], "confidence": 0.6}
+            model_response_json["location"] = {"value": [location], "confidence": 0.6}
 
         time_val = structured_query.get("time", "")
         if time_val:
-            agent_json["season"] = {"value": [time_val], "confidence": 0.6}
+            model_response_json["season"] = {"value": [time_val], "confidence": 0.6}
 
         if feedback:
-            agent_json["user_constraints"] = {"value": [feedback], "confidence": 0.8}
+            model_response_json["user_constraints"] = {"value": [feedback], "confidence": 0.8}
 
-        return agent_json
+        return model_response_json
 
-    def _normalize_initial_agent_json(self, agent_json: Dict[str, Any], prompt: str) -> Dict[str, Any]:
+    def _normalize_initial_agent_json(self, model_response_json: Dict[str, Any], prompt: str) -> Dict[str, Any]:
         """
         understand_model 출력 스키마를 recommender 입력 스키마로 정규화.
         - style가 없으면 mood/prompt 기반으로 생성
         - 필드 형식이 dict/value 구조가 아니면 보정
         """
-        normalized = dict(agent_json or {})
+        normalized = dict(model_response_json or {})
         base_fields = ["color", "size_fit", "season", "location", "mood", "user_constraints", "user_requirements"]
         for field in base_fields:
             value = normalized.get(field, {"value": [], "confidence": 0.0})
@@ -592,18 +609,18 @@ class RealGenerationModel(GenerationModelInterface):
                 scope_recs[scope] = items
         return scope_recs
 
-    def _build_context_text(self, agent_json: Dict) -> str:
+    def _build_context_text(self, model_response_json: Dict) -> str:
         """agent_json에서 평가용 텍스트 생성"""
         parts = []
-        if agent_json.get("color", {}).get("value"):
-            parts.append(", ".join(agent_json["color"]["value"]))
-        if agent_json.get("mood", {}).get("value"):
-            parts.append(", ".join(agent_json["mood"]["value"]))
-        if agent_json.get("location", {}).get("value"):
-            parts.append(", ".join(agent_json["location"]["value"]))
+        if model_response_json.get("color", {}).get("value"):
+            parts.append(", ".join(model_response_json["color"]["value"]))
+        if model_response_json.get("mood", {}).get("value"):
+            parts.append(", ".join(model_response_json["mood"]["value"]))
+        if model_response_json.get("location", {}).get("value"):
+            parts.append(", ".join(model_response_json["location"]["value"]))
         return " ".join(parts) if parts else "fashion outfit"
 
-    def _extract_target_style(self, agent_json: Dict) -> str:
+    def _extract_target_style(self, model_response_json: Dict) -> str:
         """agent_json에서 타겟 스타일 추출"""
         style_aliases = {
             "casual": "캐주얼",
@@ -649,7 +666,7 @@ class RealGenerationModel(GenerationModelInterface):
             "프레피": "프레피",
             "formal": "포멀",
         }
-        styles = agent_json.get("style", {}).get("value", [])
+        styles = model_response_json.get("style", {}).get("value", [])
         if styles:
             style = unicodedata.normalize("NFC", str(styles[0])).strip()
             style_key = " ".join(style.lower().replace("_", " ").replace("-", " ").split())

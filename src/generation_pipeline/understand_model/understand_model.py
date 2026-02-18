@@ -102,6 +102,7 @@ class UnderstandModel:
             messages.append(build_assistant_prompt(resp))
             logger.info(f"TURN {turn + 1} 완료.")
 
+# Understand model 동작 테스트용
 if __name__ == "__main__":
     test_user_prompt = "오늘 홍대 가서 친구들이랑 놀건데 어떻게 입을까?"
     agent = UnderstandModel()

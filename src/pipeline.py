@@ -1,11 +1,5 @@
 """
 CloZ-AI 통합 파이프라인
-
-생성 파이프라인(팀) + 피드백 파이프라인(내 코드)을 하나로 통합.
-
-실행:
-    python -m src.pipeline
-
 전체 흐름:
     프롬프트 입력 (자연어)
     -> UnderstandModel이 JSON 파싱
@@ -27,14 +21,7 @@ import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-
-# 프로젝트 루트 경로 설정
-project_root = Path(__file__).parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 from loguru import logger
-
 from src.generation_pipeline import (
     CLIPEncoder,
     FashionRecommender,
@@ -54,23 +41,15 @@ from src.feedback_pipeline.models.feedback import (
 from src.feedback_pipeline.models.session import SessionStatus
 from src.feedback_pipeline.interfaces.real_generation_model import RealGenerationModel
 
+# 프로젝트 루트 경로 설정
+project_root = Path(__file__).parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 class CloZPipeline:
-    """
-    CloZ-AI 통합 파이프라인.
-
-    생성 -> 피드백 -> 재생성 순환을 관리.
-    """
-
     def __init__(self, config_path: str = None):
-        """
-        Args:
-            config_path: generation_model.yaml 경로.
-                         None이면 configs/generation_model.yaml 사용.
-        """
-        # 설정 로드
         if config_path is None:
-            config_path = project_root / "configs" / "generation_model.yaml"
+            config_path = project_root / "configs" / "generation_model.yaml" # generation_model에 대한 설정 파일 경로
         self.gen_config = load_config(str(config_path))
 
         logger.info("Initializing generation pipeline components...")

@@ -70,6 +70,7 @@ class UnderstandModel:
         self.config_file = load_config(self.llm_understand_config_path)
         self.initial_sys_prompt = self.config_file["model"]["initial_sys_prompt"]
         self.clarify_sys_prompt = self.config_file["model"]["clarify_sys_prompt"]
+        self.request_additional_info_sys_prompt = self.config_file["model"]["request_additional_info_sys_prompt"]
         self.model_name = self.config_file["model"]["model_name"]
         self.api_key = os.getenv("UPSTAGE_API_KEY")
         self.reasoning_effort = self.config_file["model"]["reasoning_effort"]
@@ -79,7 +80,7 @@ class UnderstandModel:
     
     # def chat(self, messages: list[dict]) -> str:
     def initial_chat(self, user_prompt):
-        messages = [build_system_prompt(self.sys_prompt, self.json_template)]
+        messages = [build_system_prompt(self.initial_sys_prompt, self.json_template)]
         messages.append(build_user_prompt(user_prompt))
         
         response = self.client.chat.completions.create(
@@ -105,7 +106,7 @@ class UnderstandModel:
         return response.choices[0].message.content
     
     def clarify_chat(self, user_prompt):
-        messages = [build_assistant_prompt(self.)]
+        messages = [build_system_prompt(self.clarify_sys_prompt, first_model_response)]
         messages.append(build_user_prompt(user_prompt))
         
         response = self.client.chat.completions.create(

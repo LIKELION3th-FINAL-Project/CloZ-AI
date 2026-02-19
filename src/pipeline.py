@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from loguru import logger
-from src.generation_pipeline import (
+from generation_pipeline import (
     CLIPEncoder,
     FashionRecommender,
     OutfitPlanner,
@@ -30,16 +30,16 @@ from src.generation_pipeline import (
     UnderstandModel,
     load_config,
 )
-from src.feedback_pipeline.agents.manager_agent import ManagerAgent, ManagerConfig
-from src.feedback_pipeline.models.feedback import (
+from feedback_pipeline.agents.manager_agent import ManagerAgent, ManagerConfig
+from feedback_pipeline.models.feedback import (
     FeedbackInput,
     FeedbackScope,
     OutfitSet,
     ItemInfo,
     ActionType,
 )
-from src.feedback_pipeline.models.session import SessionStatus
-from src.feedback_pipeline.interfaces.real_generation_model import RealGenerationModel
+from feedback_pipeline.models.session import SessionStatus
+from feedback_pipeline.interfaces.real_generation_model import RealGenerationModel
 
 # 프로젝트 루트 경로 설정
 project_root = Path(__file__).parents[1]
@@ -199,12 +199,7 @@ class CloZPipeline:
 
     # ==================== Interactive CLI ====================
 
-    def interactive_session(self, user_id: str = "default"):
-        """
-        대화형 CLI.
-
-        기존 feedback_pipeline/main.py의 mock을 실제 파이프라인으로 대체.
-        """
+    def interactive_session(self, user_id: str = "default"): # 대화형 CLI
         self._clear_screen()
         self._print_header("CloZ-AI Pipeline")
 

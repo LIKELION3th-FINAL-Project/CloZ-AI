@@ -126,7 +126,7 @@ class RealGenerationModel(GenerationModelInterface):
                     missing_or_low_confidence.append(key)
             
             for missing_key in missing_or_low_confidence:
-                model_response = self.understand_model.request_additional_info_chat(model_response_json, missing_key)
+                model_response = self.understand_model.request_additional_info_chat(model_response_json)
                 model_response_json = extract_json_format(model_response)
                 
             

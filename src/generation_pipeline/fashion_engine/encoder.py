@@ -15,7 +15,7 @@ class CLIPEncoder:
         self.processor = CLIPProcessor.from_pretrained(self.config_file["model_name"])
         self.model = CLIPModel.from_pretrained(self.config_file["model_name"]).to(self.device).eval()
         self.use_fp16 = self.config_file["use_fp16"]
-        self.model.half() if self.use_fp16 and self.device == "cuda" else self.model() 
+        self.model.half() if self.use_fp16 and self.device == "cuda" else self.model.float()
 
     @torch.no_grad()
     def _extract_features(self, outputs: Any) -> torch.Tensor:

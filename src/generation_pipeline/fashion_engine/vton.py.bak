@@ -61,27 +61,15 @@ class VTONManager:
             logger.warning("VTON 파이프라인이 로드되지 않았습니다.")
             return None
         
-        # outfit: (pant, shirt) 순서
-        pants, shirt = outfit
+        # outfit: (pant, outer, shirt) 순서라고 가정
+        # outers는 현재 사용하지 않음
+        pants, outers, shirt = outfit
         person_img = Image.open(person_img_path).convert("RGB")
         
         logger.info(f"\n조합 #{idx + 1}")
         logger.info(f" - shirt: {shirt['path']}")
         logger.info(f" - pant : {pants['path']}")
-        # logger.info(f" - outer: {outers['path']}")  # [원래 코드: outer 사용]
-
-
-# ==================== [원래 코드 - outer 사용] ====================
-# def try_on(self, person_img_path: str, outfit: Tuple, output_prefix: str, idx: int = 0) -> Optional[Dict]:
-#     """상의, 하의 순서로 가상 피팅 적용"""
-#     # outfit: (pant, outer, shirt) 순서라고 가정
-#     pants, outers, shirt = outfit
-#     person_img = Image.open(person_img_path).convert("RGB")
-#     
-#     logger.info(f"\n조합 #{idx + 1}")
-#     logger.info(f" - shirt: {shirt['path']}")
-#     logger.info(f" - pant : {pants['path']}")
-#     # logger.info(f" - outer: {outers['path']}")
+        #logger.info(f" - outer: {outers['path']}")
         
         try:
             # 1. 하의 적용 (원본 이미지에 하의 합성)

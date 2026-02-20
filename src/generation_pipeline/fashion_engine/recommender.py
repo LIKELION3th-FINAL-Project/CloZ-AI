@@ -49,7 +49,7 @@ class FashionRecommender:
         return None
 
     def load_user_wardrobe(self, collection_name = "wardrobe"):
-        """ChromaDB 캐시를 활용하여 옷장 아이템 로드 (로컬 폴더 tops/bottoms/outers 대응)"""
+        """ChromaDB 캐시를 활용하여 옷장 아이템 로드 (로컬 폴더 tops/bottoms 대응)"""
         try:
             client = chromadb.PersistentClient(path = self.config["chromadb_user_war_embedding_dir"])
             col = client.get_or_create_collection(name = collection_name)
@@ -118,7 +118,7 @@ class FashionRecommender:
         logger.info(f"Loaded {len(self.item_db)} items. (Chroma: {loaded_from}, New: {new_encoded})")
         if not self.item_db:
             logger.error(
-                "옷장 아이템이 0개입니다. user_clothes_dir 내부에 tops/bottoms/outers(또는 상의/하의/아우터) 폴더와 이미지 파일이 있는지 확인하세요."
+                "옷장 아이템이 0개입니다. user_clothes_dir 내부에 tops/bottoms(또는 상의/하의) 폴더와 이미지 파일이 있는지 확인하세요."
             )
         return self.item_db
 
@@ -206,13 +206,15 @@ class FashionRecommender:
         if is_new:
             styles = agent_json.get("style", {}).get("value", ["캐주얼"])
             colors = agent_json.get("color", {}).get("value", [])
-            target_cats = ["상의", "하의", "아우터"]
+            target_cats = ["상의", "하의"]  # [원래 코드: 아우터 포함]
+            # target_cats = ["상의", "하의", "아우터"]
             q_emb = self.encoder.encode_text(self._build_context_text(agent_json)).to(torch.float32).cpu()
             conf_weight = self._calculate_confidence_weight(agent_json)
         else:
             intent = agent_json.get("analyzed_intent", {})
             styles = [intent.get("style", "캐주얼")]
-            target_cats = intent.get("categories", ["상의", "하의", "아우터"])
+            target_cats = intent.get("categories", ["상의", "하의"])  # [원래 코드: 아우터 포함]
+            # target_cats = intent.get("categories", ["상의", "하의", "아우터"])
             q_embs = [self.encoder.encode_text(kw) for kw in agent_json.get("expanded_keywords", [agent_json.get("original_query", "")])]
             q_emb = torch.stack(q_embs).mean(dim=0).to(torch.float32).cpu()
             conf_weight = 1.0

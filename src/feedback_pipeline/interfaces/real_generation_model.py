@@ -206,7 +206,7 @@ class RealGenerationModel(GenerationModelInterface):
         exclude_items: Optional[List[str]] = None,
         exclude_map: Optional[Dict[str, set]] = None,
         candidate_pool: Optional[Dict[str, List[str]]] = None,
-        include_outer: bool = True,
+        include_outer: bool = False,
         keep_map: Optional[Dict[str, set]] = None,
     ) -> GenerationResult:
         """추천 -> 조합 -> 평가 -> VTON 실행"""

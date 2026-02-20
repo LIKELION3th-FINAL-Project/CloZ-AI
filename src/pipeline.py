@@ -86,7 +86,11 @@ class CloZPipeline:
     def _init_vton(self):
         """VTONManager 초기화 (실패 시 예외 발생)"""
         try:
-            return VTONManager()
+            return VTONManager(
+                guidance_scale=self.gen_config.get("vton_guidance_scale", 1.5),
+                num_timesteps=self.gen_config.get("vton_num_timesteps", 30),
+                seed=self.gen_config.get("vton_seed", 42)
+            )
         except Exception as e:
             logger.error(f"VTONManager 초기화 실패: {e}")
             raise RuntimeError(f"VTONManager 초기화 실패: {e}") from e

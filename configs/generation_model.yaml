@@ -8,10 +8,9 @@ chromadb_user_war_embedding_dir: src/data/chroma_wardrobe
 combination_top_k: 3
 folder_map:
   bottoms: 하의
-  outers: 아우터
+  # outers: 아우터  # 미사용
   tops: 상의
   상의: 상의
-  아우터: 아우터
   하의: 하의
 item_top_k: 3
 model_name: patrickjohncyh/fashion-clip
@@ -22,3 +21,8 @@ user_clothes_dir: data/user_wardrobe_images
 user_bottom_image: data/user_wardrobe_images/bottoms
 user_outer_image: data/user_wardrobe_images/outers
 user_top_image: data/user_wardrobe_images/tops
+
+# VTON 하이퍼파라미터 (fashn-vton 1.5)
+vton_guidance_scale: 2.2  # classifier-free guidance 강도 (높을수록 garment likeness 강함)
+vton_num_timesteps: 40    # diffusion 샘플링 스텝 수 (높을수록 품질, 느림)
+vton_seed: 42             # 재현용 랜덤 시드

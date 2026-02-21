@@ -1,5 +1,5 @@
 from PIL import Image
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Union
 from loguru import logger
 from fashn_vton import TryOnPipeline
 from pathlib import Path
@@ -7,9 +7,21 @@ import os
 
 class VTONManager:
     """가상 피팅(Virtual Try-On) 실행 및 이미지 생성 클래스"""
-    def __init__(self):
+    
+    # VTON 하이퍼파라미터 기본값 (fashn-vton 1.5)
+    DEFAULT_GUIDANCE_SCALE = 1.5  # classifier-free guidance 강도
+    DEFAULT_NUM_TIMESTEPS = 30    # diffusion 샘플링 스텝 수
+    DEFAULT_SEED = 42             # 재현용 랜덤 시드
+    
+    def __init__(self, guidance_scale: Union[float, None] = None, num_timesteps: Union[int, None] = None, seed: Union[int, None] = None):
         self.pipeline = None
         self.vton_weights_dir = self._resolve_weights_dir()
+        
+        # 하이퍼파라미터 설정
+        self.guidance_scale = guidance_scale if guidance_scale is not None else self.DEFAULT_GUIDANCE_SCALE
+        self.num_timesteps = num_timesteps if num_timesteps is not None else self.DEFAULT_NUM_TIMESTEPS
+        self.seed = seed if seed is not None else self.DEFAULT_SEED
+        
         try:
             self.pipeline = TryOnPipeline(weights_dir=self.vton_weights_dir)
             logger.info("Fashion-VTON 파이프라인 로드 완료 (가중치는 재사용됩니다)")
@@ -44,46 +56,62 @@ class VTONManager:
         )
 
     def try_on(self, person_img_path: str, outfit: Tuple, output_prefix: str, idx: int = 0) -> Optional[Dict]:
-        """상의, 하위 순차적으로 가상 피팅 적용"""
+        """하의, 상의 순서로 가상 피팅 적용"""
         if not self.pipeline: 
             logger.warning("VTON 파이프라인이 로드되지 않았습니다.")
             return None
         
-        # outfit: (pant, outer, shirt) 순서라고 가정
-        pants, outers, shirt = outfit
+        # outfit: (pant, shirt) 순서
+        pants, shirt = outfit
         person_img = Image.open(person_img_path).convert("RGB")
         
         logger.info(f"\n조합 #{idx + 1}")
-        logger.info(f" - top   : {shirt['path']}")
-        logger.info(f" - bottom: {pants['path']}")
-        if outers:
-            logger.info(f" - outer: {outers['path']}")
-        else:
-            logger.info(" - outer: (excluded)")
+        logger.info(f" - shirt: {shirt['path']}")
+        logger.info(f" - pant : {pants['path']}")
+        # logger.info(f" - outer: {outers['path']}")  # [원래 코드: outer 사용]
+
+
+# ==================== [원래 코드 - outer 사용] ====================
+# def try_on(self, person_img_path: str, outfit: Tuple, output_prefix: str, idx: int = 0) -> Optional[Dict]:
+#     """상의, 하의 순서로 가상 피팅 적용"""
+#     # outfit: (pant, outer, shirt) 순서라고 가정
+#     pants, outers, shirt = outfit
+#     person_img = Image.open(person_img_path).convert("RGB")
+#     
+#     logger.info(f"\n조합 #{idx + 1}")
+#     logger.info(f" - shirt: {shirt['path']}")
+#     logger.info(f" - pant : {pants['path']}")
+#     # logger.info(f" - outer: {outers['path']}")
         
         try:
-            # 상의 적용
-            res_top = self.pipeline(
+            # 1. 하의 적용 (원본 이미지에 하의 합성)
+            res_bottoms = self.pipeline(
                 person_image=person_img, 
-                garment_image=Image.open(shirt['path']).convert("RGB"), 
-                category="tops"
-            )
-            top_path = f"{output_prefix}_q{idx}_top.png"
-            res_top.images[0].save(top_path)
-            
-            # 하의 적용
-            res_final = self.pipeline(
-                person_image=res_top.images[0], 
                 garment_image=Image.open(pants['path']).convert("RGB"), 
-                category="bottoms"
+                category="bottoms",
+                guidance_scale=self.guidance_scale,
+                num_timesteps=self.num_timesteps,
+                seed=self.seed
             )
-            final_path = f"{output_prefix}_q{idx}_top_bottom.png"
+            bottom_path = f"{output_prefix}_q{idx}_bottom.png"
+            res_bottoms.images[0].save(bottom_path)
+            
+            # 2. 상의 적용 (하의 합성 결과에 상의 합성)
+            res_final = self.pipeline(
+                person_image=res_bottoms.images[0], 
+                garment_image=Image.open(shirt['path']).convert("RGB"), 
+                category="tops",
+                guidance_scale=self.guidance_scale,
+                num_timesteps=self.num_timesteps,
+                seed=self.seed
+            )
+            final_path = f"{output_prefix}_q{idx}_bottom_top.png"
             res_final.images[0].save(final_path)
             
-            logger.info(f"Saved: {top_path}, {final_path}")
+            logger.info(f"Saved: {bottom_path}, {final_path}")
             
             return {
-                "top_path": top_path,
+                "bottom_path": bottom_path,
                 "final_path": final_path
             }
         except Exception as e:

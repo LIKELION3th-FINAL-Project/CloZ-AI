@@ -68,18 +68,19 @@ class UnderstandModel:
         self.llm_understand_config_path = Path(__file__).parents[3] / "configs" / "llm_base_understand.yaml"
         self.json_template = load_json(self.json_template_path)
         self.config_file = load_config(self.llm_understand_config_path)
-        self.sys_prompt = self.config_file["model"]["sys_prompt"]
+        self.initial_sys_prompt = self.config_file["model"]["initial_sys_prompt"]
+        self.clarify_sys_prompt = self.config_file["model"]["clarify_sys_prompt"]
+        self.request_additional_info_sys_prompt = self.config_file["model"]["request_additional_info_sys_prompt"]
         self.model_name = self.config_file["model"]["model_name"]
         self.api_key = os.getenv("UPSTAGE_API_KEY")
         self.reasoning_effort = self.config_file["model"]["reasoning_effort"]
         self.stream = self.config_file["model"]["stream"]
         self.temperature = self.config_file["model"]["temperature"]
         self.client = OpenAI(api_key = self.api_key, base_url = self.config_file["model"]["base_url"])
-        # self.max_turns = self.config_file.get("chat", {}).get("max_turns", 10)
     
     # def chat(self, messages: list[dict]) -> str:
-    def chat(self, user_prompt):
-        messages = [build_system_prompt(self.sys_prompt, self.json_template)]
+    def initial_chat(self, user_prompt):
+        messages = [build_system_prompt(self.initial_sys_prompt, self.json_template)]
         messages.append(build_user_prompt(user_prompt))
         
         response = self.client.chat.completions.create(
@@ -91,17 +92,33 @@ class UnderstandModel:
         logger.info(f"MODEL RESP: {response.choices[0].message.content}")
         return response.choices[0].message.content
     
-    def multi_turn(self):
-        messages = [build_system_prompt(self.sys_prompt, self.json_template)]
+    def request_additional_info_chat(self, first_model_response):
+        messages = [build_system_prompt(self.request_additional_info_sys_prompt, first_model_response)]
+        messages.append(build_user_prompt(user_prompt))
         
-        for turn in range(3):
-            user_input = input("사용자 입력 : ").strip()
-            messages.append(build_user_prompt(user_input))
-            resp = self.chat(messages = messages)
-            logger.info(f"RESP: {resp}")
-            messages.append(build_assistant_prompt(resp))
-            logger.info(f"TURN {turn + 1} 완료.")
+        response = self.client.chat.completions.create(
+            model = self.model_name,
+            messages = messages,
+            temperature = self.temperature,
+            reasoning_effort = self.reasoning_effort,
+        )
+        logger.info(f"MODEL RESP: {response.choices[0].message.content}")
+        return response.choices[0].message.content
+    
+    def clarify_chat(self, user_prompt):
+        messages = [build_system_prompt(self.clarify_sys_prompt, first_model_response)]
+        messages.append(build_user_prompt(user_prompt))
+        
+        response = self.client.chat.completions.create(
+            model = self.model_name,
+            messages = messages,
+            temperature = self.temperature,
+            reasoning_effort = self.reasoning_effort,
+        )
+        logger.info(f"MODEL RESP: {response.choices[0].message.content}")
+        return response.choices[0].message.content
 
+# Understand model 동작 테스트용
 if __name__ == "__main__":
     test_user_prompt = "오늘 홍대 가서 친구들이랑 놀건데 어떻게 입을까?"
     agent = UnderstandModel()

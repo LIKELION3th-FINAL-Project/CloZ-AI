@@ -8,6 +8,7 @@ python-dotenv>=1.0.0
 # LLM
 openai>=1.0.0
 google-generativeai>=0.3.0
+google-genai>=0.5.0
 requests>=2.28.0
 
 # Embedding & Vector DB

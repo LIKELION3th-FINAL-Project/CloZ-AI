@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Iterable
 
 from huggingface_hub import hf_hub_download
-from loguru import logger
 
 
 def _download_tryon_model(weights_dir: Path) -> None:
@@ -73,20 +72,20 @@ def main() -> int:
     weights_dir = Path(args.weights_dir).expanduser() if args.weights_dir else (project_root / "weights")
     weights_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"[setup_vton_weights] target={weights_dir}")
+    print(f"[setup_vton_weights] target={weights_dir}")
     _download_tryon_model(weights_dir)
     _download_dwpose_models(weights_dir)
     _warmup_human_parser(args.skip_human_parser)
 
     missing = list(_verify_files(weights_dir))
     if missing:
-        logger.warning("[setup_vton_weights] missing files:")
+        print("[setup_vton_weights] missing files:")
         for path in missing:
-            logger.warning(f"  - {path}")
+            print(f"  - {path}")
         return 1
 
-    logger.info("[setup_vton_weights] done")
-    logger.info(f"[setup_vton_weights] export FASHN_VTON_WEIGHTS_DIR={weights_dir}")
+    print("[setup_vton_weights] done")
+    print(f"[setup_vton_weights] export FASHN_VTON_WEIGHTS_DIR={weights_dir}")
     return 0
 
 

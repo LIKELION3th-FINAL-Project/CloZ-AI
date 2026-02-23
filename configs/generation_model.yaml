@@ -2,23 +2,27 @@ cat_to_db:
   상의: shirt
   아우터: outer
   하의: pant
-chroma_db_path: data/chroma_db
-chromadb_ref_embedding_dir: data/reference/chromadb_ref
-chromadb_user_war_embedding_dir: data/user/chroma_wardrobe
+chroma_db_path: data/chroma_db_products
+chromadb_ref_embedding_dir: data/chromadb_ref
+chromadb_user_war_embedding_dir: data/chroma_wardrobe
 combination_top_k: 3
 folder_map:
   bottoms: 하의
-  outers: 아우터
+  # outers: 아우터  # 미사용
   tops: 상의
   상의: 상의
-  아우터: 아우터
   하의: 하의
 item_top_k: 3
 model_name: patrickjohncyh/fashion-clip
 num_of_show: 3
 use_fp16: true
-user_body_image: data/user/user_body_image/sample_body.png
-user_clothes_dir: data/user/user_wardrobe_images
-user_bottom_image: data/user/user_wardrobe_images/bottoms
-user_outer_image: data/user/user_wardrobe_images/outers
-user_top_image: data/user/user_wardrobe_images/tops
+user_body_image: data/sample_body.png
+user_clothes_dir: closet_mj
+user_bottom_image: closet_mj/bottoms
+user_outer_image: closet_mj/outers
+user_top_image: closet_mj/tops
+
+# VTON 하이퍼파라미터 (fashn-vton 1.5)
+vton_guidance_scale: 2.2  # classifier-free guidance 강도 (높을수록 garment likeness 강함)
+vton_num_timesteps: 40    # diffusion 샘플링 스텝 수 (높을수록 품질, 느림)
+vton_seed: 42             # 재현용 랜덤 시드

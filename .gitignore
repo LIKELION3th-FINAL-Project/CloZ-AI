@@ -78,8 +78,3 @@ src/fashn_vton/pyproject.toml
 
 # experiments
 note.*
-
-# vton weights
-weights
-
-*cache*

@@ -7,10 +7,12 @@ Original Query + Feedbacks → 통합 쿼리 생성
 import os
 import json
 import re
+import ast
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
-import requests
+from openai import OpenAI
 from dotenv import load_dotenv
+from .detail_category import DETAIL_CAT_RULES, normalize_detail_category
 
 # .env 파일 로드
 load_dotenv()
@@ -32,6 +34,9 @@ class RefinedQuery:
     constraints: List[str] = field(default_factory=list)   # 제한사항: ["검은색 제외", "타이트한 옷 제외"]
     target_detail_cats: List[str] = field(default_factory=list)  # 타겟 세부카테고리: ["Knitwear", "Sweatshirt"]
     avoid_detail_cats: List[str] = field(default_factory=list)  # 제외 세부카테고리: ["Knitwear"]
+    location_confidence: float = 0.0                       # 장소 해석 신뢰도(0~1)
+    resolved_styles: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    style_candidates: List[Dict[str, Any]] = field(default_factory=list)
     prefer_brightness: Optional[str] = None                 # 색상 밝기 선호: "light" or "dark"
     original_text: str = ""                                 # 원본 텍스트
 
@@ -45,6 +50,9 @@ class RefinedQuery:
             "constraints": self.constraints,
             "target_detail_cats": self.target_detail_cats,
             "avoid_detail_cats": self.avoid_detail_cats,
+            "location_confidence": self.location_confidence,
+            "resolved_styles": self.resolved_styles,
+            "style_candidates": self.style_candidates,
             "prefer_brightness": self.prefer_brightness,
             "original_text": self.original_text,
         }
@@ -151,7 +159,9 @@ class QueryBuilder:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("UPSTAGE_API_KEY")
         self.base_url = "https://api.upstage.ai/v1"
-        self.model = "solar-pro"
+        self.model = "solar-pro3"
+        self.reasoning_effort = os.getenv("UPSTAGE_REASONING_EFFORT", "high")
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def build_combined_query(
         self,
@@ -228,62 +238,17 @@ class QueryBuilder:
         # Solar Pro 3로 구조화된 정보 추출
         prompt = self._build_refine_prompt(original_query)
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.3,
-            "max_tokens": 300
-        }
-
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=30
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                reasoning_effort=self.reasoning_effort,
+                stream=False,
             )
-            response.raise_for_status()
-
-            result = response.json()
-            content = result["choices"][0]["message"]["content"]
-
-            # JSON 추출 (코드 블록 및 추가 텍스트 제거)
-            content = content.strip()
-
-            # ```json ... ``` 코드 블록 제거
-            if content.startswith("```"):
-                lines = content.split("\n")
-                # json 시작과 ``` 끝 사이의 내용만 추출
-                start_idx = 1  # ```json 다음 줄부터
-                end_idx = len(lines)
-                for i in range(1, len(lines)):
-                    if lines[i].strip().startswith("```"):
-                        end_idx = i
-                        break
-                content = "\n".join(lines[start_idx:end_idx])
-
-            # JSON 부분만 추출 (### 등 추가 설명 제거)
-            json_lines = []
-            in_json = False
-            for line in content.split("\n"):
-                if line.strip().startswith("{"):
-                    in_json = True
-                if in_json:
-                    json_lines.append(line)
-                if line.strip().startswith("}"):
-                    break
-
-            content = "\n".join(json_lines)
-
-            # JSON 파싱
-            parsed = json.loads(content)
+            content = getattr(response.choices[0].message, "content", "")
+            if not content:
+                raise ValueError("refine_original_query: empty content response")
+            parsed = self._parse_json_from_model_output(content, "refine_original_query")
             refined = RefinedQuery(
                 mood=parsed.get("mood", []),
                 time=parsed.get("time"),
@@ -293,6 +258,9 @@ class QueryBuilder:
                 constraints=parsed.get("constraints", []),
                 target_detail_cats=parsed.get("target_detail_cats", []),
                 avoid_detail_cats=parsed.get("avoid_detail_cats", []),
+                location_confidence=self._coerce_float(parsed.get("location_confidence"), 0.0),
+                resolved_styles=self._coerce_resolved_styles(parsed.get("resolved_styles", {})),
+                style_candidates=self._coerce_style_candidates(parsed.get("style_candidates", [])),
                 prefer_brightness=parsed.get("prefer_brightness"),
                 original_text=original_query
             )
@@ -304,54 +272,93 @@ class QueryBuilder:
             fallback = RefinedQuery(original_text=original_query)
             return self._apply_detail_cat_negation_rules(original_query, fallback)
 
+    @staticmethod
+    def _coerce_float(value: Any, default: float = 0.0, min_value: float = 0.0, max_value: float = 1.0) -> float:
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return default
+        return max(min_value, min(max_value, num))
+
+    @staticmethod
+    def _coerce_style_label(style_value: Any) -> Optional[str]:
+        if not isinstance(style_value, str):
+            return None
+        value = style_value.strip()
+        return value if value else None
+
+    @classmethod
+    def _coerce_style_record(cls, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(record, dict):
+            return None
+        style = cls._coerce_style_label(record.get("style"))
+        if not style:
+            return None
+        return {
+            "style": style,
+            "location_score": record.get("location_score", 0.0),
+            "mood_score": record.get("mood_score", 0.0),
+            "final_score": record.get("final_score", 0.0),
+            "source": record.get("source", []),
+            "reason": record.get("reason", ""),
+        }
+
+    def _coerce_style_candidates(self, candidates: Any) -> List[Dict[str, Any]]:
+        if not isinstance(candidates, list):
+            return []
+        result: List[Dict[str, Any]] = []
+        for candidate in candidates:
+            record = self._coerce_style_record(candidate)
+            if record:
+                result.append(record)
+        return result
+
+    @staticmethod
+    def _coerce_resolved_styles(raw: Any) -> Dict[str, Dict[str, Any]]:
+        if not isinstance(raw, dict):
+            return {}
+        result: Dict[str, Dict[str, Any]] = {}
+        if isinstance(primary := raw.get("primary"), dict):
+            if primary.get("style"):
+                result["primary"] = {
+                    "style": primary.get("style"),
+                    "location_score": primary.get("location_score", 0.0),
+                    "mood_score": primary.get("mood_score", 0.0),
+                    "final_score": primary.get("final_score", 0.0),
+                    "source": primary.get("source", []),
+                    "reason": primary.get("reason", ""),
+                }
+        if isinstance(secondary := raw.get("secondary"), dict):
+            if secondary.get("style"):
+                result["secondary"] = {
+                    "style": secondary.get("style"),
+                    "location_score": secondary.get("location_score", 0.0),
+                    "mood_score": secondary.get("mood_score", 0.0),
+                    "final_score": secondary.get("final_score", 0.0),
+                    "source": secondary.get("source", []),
+                    "reason": secondary.get("reason", ""),
+                }
+        return result
+
     def _apply_detail_cat_negation_rules(self, text: str, refined: RefinedQuery) -> RefinedQuery:
         """
-        LLM 출력 보정:
-        - '니트 말고', '데님 제외' 같은 부정문은 target이 아니라 avoid로 강제 이동
+        LLM 출력 검증/정규화:
+        - 의미 재해석은 하지 않고 canonical 변환 + 충돌 정리만 수행
         """
-        if not text:
-            return refined
+        _ = text
 
-        rules = {
-            "Knitwear": [r"니트", r"knit"],
-            "Sweatshirt": [r"맨투맨", r"스웨트", r"후드", r"후드티", r"sweatshirt", r"hoodie"],
-            "Shirt": [r"셔츠", r"shirt"],
-            "Tee": [r"티셔츠", r"tee"],
-            "Denim": [r"데님", r"청바지", r"denim", r"jean"],
-            "Chino": [r"치노", r"chino"],
-            "Trousers": [r"슬랙스", r"트라우저", r"trouser", r"slacks"],
-            "Easy_pants": [r"이지팬츠", r"easy pants"],
-            "Work_pants": [r"워크팬츠", r"work pants"],
-            "Short": [r"반바지", r"쇼츠", r"shorts?"],
-            "Jacket_Blouson": [r"자켓", r"블루종", r"jacket", r"blouson"],
-            "Coat": [r"코트", r"coat"],
-            "Cardigan": [r"가디건", r"cardigan"],
-            "Jumper_Parka": [r"점퍼", r"파카", r"jumper", r"parka"],
-            "Padding": [r"패딩", r"padding", r"puffer"],
-            "Leather": [r"레더", r"가죽", r"leather"],
-            "Vest": [r"베스트", r"조끼", r"vest"],
+        llm_target = {
+            normalize_detail_category(cat)
+            for cat in (refined.target_detail_cats or [])
+            if normalize_detail_category(cat) in DETAIL_CAT_RULES
         }
-        neg_markers = ["말고", "제외", "빼고", "빼줘", "빼", "없이", "말아", "not", "without", "except"]
-        text_lower = text.lower()
-
-        llm_target = set(refined.target_detail_cats or [])
-        llm_avoid = set(refined.avoid_detail_cats or [])
-        rule_target = set()
-        rule_avoid = set()
-
-        for detail_cat, patterns in rules.items():
-            for pattern in patterns:
-                for match in re.finditer(pattern, text_lower):
-                    s, e = match.span()
-                    window = text_lower[max(0, s - 8): min(len(text_lower), e + 8)]
-                    is_neg = any(marker in window for marker in neg_markers)
-                    if is_neg:
-                        rule_avoid.add(detail_cat)
-                    else:
-                        rule_target.add(detail_cat)
-
-        final_avoid = llm_avoid | rule_avoid
-        final_target = (llm_target | rule_target) - final_avoid
+        llm_avoid = {
+            normalize_detail_category(cat)
+            for cat in (refined.avoid_detail_cats or [])
+            if normalize_detail_category(cat) in DETAIL_CAT_RULES
+        }
+        final_avoid = llm_avoid
+        final_target = llm_target - final_avoid
 
         refined.avoid_detail_cats = sorted(final_avoid)
         refined.target_detail_cats = sorted(final_target)
@@ -364,50 +371,62 @@ class QueryBuilder:
 
 ## 역할
 사용자의 의류 추천 요청을 분석하여 구조화된 정보를 추출하세요.
+출력은 JSON만 반환하며, 값이 없으면 빈 값으로 표기하세요.
 
 ## 입력
 사용자 요청: "{original_query}"
 
+## 제약
+- 15개 기준 스타일: ["고프코어","레트로","로맨틱","리조트","미니멀","스트릿","스포티","시크","시티보이","아웃도어","오피스","워크웨어","캐주얼","클래식","프레피"]
+- 스타일 후보는 반드시 위 15개에 한정
+- location/time/mood/요청 의도를 최대한 반영
+- location 정보가 강하면 style 후보에 반영, 강도가 약하면 mood만 반영
+- 15개에 매칭이 안 되면 style_candidates로 유사도 기반 후보를 채우고, style 후보는 비워도 됨
+- 사용자 요청의 의류 카테고리 표현을 반드시 추출해 문맥에 맞는 표준 세부카테고리로 해석하고 target_detail_cats와 avoid_detail_cats에 반영하라.
+
 ## 추출 항목
-1. **mood**: 분위기, 스타일 키워드 (배열)
+1. **mood**: 분위기 키워드 (배열)
    - 예: ["캐주얼", "편안한", "밝은", "모던한"]
 
 2. **time**: 시간적 맥락 (문자열 또는 null)
    - 예: "봄", "여름", "주말", "평일 오후"
 
-3. **location**: 장소, 상황 (문자열 또는 null)
+3. **location**: 장소/상황 (문자열 또는 null)
    - 예: "사무실", "데이트", "카페", "야외 활동"
 
-4. **requirements**: 명시적 요구사항 - 한국어 (배열)
+4. **location_confidence**: location 해석 신뢰도 (0~1 실수)
+   - 명확한 지명/상황은 0.7~1.0
+   - 약한 단서 또는 없음은 0~0.4
+
+5. **requirements**: 명시적 요구사항 - 한국어 (배열)
    - 예: ["상의는 밝은 색", "편한 핏", "정장 느낌"]
 
-5. **requirements_en**: 명시적 요구사항 - 영어 번역 (배열)
-   - FashionCLIP 임베딩 검색용 영어 번역
-   - 의류 검색에 적합한 간결한 영어 표현 사용
-   - 예: ["bright colored top", "comfortable fit", "formal style"]
+6. **requirements_en**: 명시적 요구사항 - 영어 번역 (배열)
+   - FashionCLIP 임베딩 검색용, 간결하게 번역
+   - 예: ["bright colored top", "comfortable fit"]
 
-6. **constraints**: 제한사항, 회피 사항 (배열)
+7. **constraints**: 제한사항, 회피 사항 (배열)
    - 예: ["검은색 제외", "타이트한 옷 제외", "화려한 패턴 제외"]
 
-7. **target_detail_cats**: 요청에서 언급된 의류 세부 카테고리 (배열)
-   - 반드시 아래 목록에서만 선택 (없으면 빈 배열):
-   - 상의: "Tee", "Shirt", "Sweatshirt", "Knitwear"
-   - 하의: "Denim", "Chino", "Trousers", "Easy_pants", "Work_pants", "Short"
-   - 아우터: "Jacket_Blouson", "Coat", "Cardigan", "Jumper_Parka", "Padding", "Leather", "Vest"
-   - 예: 사용자가 "니트로 바꿔줘"라고 하면 ["Knitwear"]
+8. **target_detail_cats**: 요청에서 언급된 의류 세부 카테고리 (배열)
+   - 목록: 상의(Tee,Shirt,Sweatshirt,Knitwear), 하의(Denim,Chino,Trousers,Easy_pants,Work_pants,Short), 아우터(Jacket_Blouson,Coat,Cardigan,Jumper_Parka,Padding,Leather,Vest)
 
-8. **avoid_detail_cats**: 제외할 의류 세부 카테고리 (배열)
-   - 반드시 아래 목록에서만 선택 (없으면 빈 배열):
-   - 상의: "Tee", "Shirt", "Sweatshirt", "Knitwear"
-   - 하의: "Denim", "Chino", "Trousers", "Easy_pants", "Work_pants", "Short"
-   - 아우터: "Jacket_Blouson", "Coat", "Cardigan", "Jumper_Parka", "Padding", "Leather", "Vest"
-   - 예: "니트 말고 다른 걸로" -> ["Knitwear"]
+9. **avoid_detail_cats**: 제외할 의류 세부 카테고리 (배열)
+   - 목록 동일
 
-9. **prefer_brightness**: 색상 밝기 선호 (문자열 또는 null)
-   - "light": 밝은색 선호 (밝은, 화사한, 연한, 파스텔 등)
-   - "dark": 어두운색 선호 (어두운, 진한, 무거운 등)
-   - null: 밝기 언급 없음
-   - 예: "밝은 니트로 바꿔줘" → "light", "어두운 색으로" → "dark"
+10. **prefer_brightness**: 색상 밝기 선호 (문자열 또는 null)
+    - "light": 밝은색 선호
+    - "dark": 어두운색 선호
+    - null: 밝기 언급 없음
+
+11. **resolved_styles**
+    - 스타일을 확정한 결과: primary / secondary
+    - 각 값은 style, location_score, mood_score, final_score, source, reason 포함
+    - 매칭이 약하면 빈 객체로 둬도 됨
+
+12. **style_candidates**
+    - 15개 스타일과 유사도가 높은 후보 최대 3개
+    - location/mood 매핑이 애매한 경우에만 채워 사용
 
 ## 출력 형식
 반드시 JSON으로만 반환:
@@ -415,11 +434,40 @@ class QueryBuilder:
   "mood": ["키워드1", "키워드2"],
   "time": "시점" 또는 null,
   "location": "장소" 또는 null,
-  "requirements": ["요구사항1", "요구사항2"],
-  "requirements_en": ["requirement1 in English", "requirement2 in English"],
+  "location_confidence": 0.0,
+  "requirements": ["요구사항1"],
+  "requirements_en": ["requirement1 in English"],
   "constraints": ["제한사항1"],
   "target_detail_cats": ["세부카테고리1"],
   "avoid_detail_cats": ["제외카테고리1"],
+  "resolved_styles": {{
+    "primary": {{
+      "style": "캐주얼",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": ["location", "mood"],
+      "reason": ""
+    }},
+    "secondary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }}
+  }},
+  "style_candidates": [
+    {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }}
+  ],
   "prefer_brightness": "light" 또는 "dark" 또는 null
 }}
 
@@ -430,25 +478,65 @@ class QueryBuilder:
   "mood": ["캐주얼", "데이트 느낌"],
   "time": "봄",
   "location": "데이트",
+  "location_confidence": 0.84,
   "requirements": ["캐주얼한 봄 데이트룩"],
   "requirements_en": ["casual spring date outfit"],
   "constraints": [],
   "target_detail_cats": [],
   "avoid_detail_cats": [],
+  "resolved_styles": {{
+    "primary": {{
+      "style": "로맨틱",
+      "location_score": 0.75,
+      "mood_score": 0.62,
+      "final_score": 0.74,
+      "source": ["location", "mood"],
+      "reason": "데이트 맥락에서 로맨틱성 우세"
+    }},
+    "secondary": {{
+      "style": "캐주얼",
+      "location_score": 0.0,
+      "mood_score": 0.46,
+      "final_score": 0.42,
+      "source": ["mood"],
+      "reason": "전체 무드가 편안한 편"
+    }}
+  }},
+  "style_candidates": [],
   "prefer_brightness": null
 }}
 
 입력: "사무실에서 입을 편한 옷 추천. 검은색은 싫어"
 출력:
 {{
-  "mood": ["편안한", "오피스"],
+  "mood": ["편안한"],
   "time": null,
   "location": "사무실",
+  "location_confidence": 0.88,
   "requirements": ["편한 핏의 사무실 옷"],
   "requirements_en": ["comfortable office wear"],
   "constraints": ["검은색 제외"],
   "target_detail_cats": [],
   "avoid_detail_cats": [],
+  "resolved_styles": {{
+    "primary": {{
+      "style": "오피스",
+      "location_score": 0.9,
+      "mood_score": 0.34,
+      "final_score": 0.82,
+      "source": ["location"],
+      "reason": "사무실이라는 장소 신호가 오피스로 강하게 수렴"
+    }},
+    "secondary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }}
+  }},
+  "style_candidates": [],
   "prefer_brightness": null
 }}
 
@@ -458,40 +546,41 @@ class QueryBuilder:
   "mood": ["밝은"],
   "time": null,
   "location": null,
+  "location_confidence": 0.0,
   "requirements": ["밝은 색 니트로 변경"],
   "requirements_en": ["bright colored knit sweater"],
   "constraints": [],
   "target_detail_cats": ["Knitwear"],
   "avoid_detail_cats": [],
+  "resolved_styles": {{
+    "primary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }},
+    "secondary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }}
+  }},
+  "style_candidates": [
+    {{
+      "style": "캐주얼",
+      "location_score": 0.2,
+      "mood_score": 0.48,
+      "final_score": 0.32,
+      "source": ["mood"],
+      "reason": "무드 추출값의 직접 매칭이 약해 후보화"
+    }}
+  ],
   "prefer_brightness": "light"
-}}
-
-입력: "니트로 바꿔줘"
-출력:
-{{
-  "mood": [],
-  "time": null,
-  "location": null,
-  "requirements": ["니트로 변경"],
-  "requirements_en": ["knit sweater"],
-  "constraints": [],
-  "target_detail_cats": ["Knitwear"],
-  "avoid_detail_cats": [],
-  "prefer_brightness": null
-}}
-
-입력: "상의를 후드티로 바꿔줘"
-출력:
-{{
-  "mood": [],
-  "time": null,
-  "location": null,
-  "requirements": ["상의를 후드티로 변경"],
-  "requirements_en": ["hoodie sweatshirt"],
-  "constraints": [],
-  "target_detail_cats": ["Sweatshirt"],
-  "avoid_detail_cats": [],
-  "prefer_brightness": null
 }}
 
 입력: "어두운 색으로 바꿔줘"
@@ -500,11 +589,31 @@ class QueryBuilder:
   "mood": ["어두운"],
   "time": null,
   "location": null,
+  "location_confidence": 0.0,
   "requirements": ["어두운 색으로 변경"],
   "requirements_en": ["dark colored clothing"],
   "constraints": [],
   "target_detail_cats": [],
   "avoid_detail_cats": [],
+  "resolved_styles": {{
+    "primary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }},
+    "secondary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }}
+  }},
+  "style_candidates": [],
   "prefer_brightness": "dark"
 }}
 
@@ -514,11 +623,31 @@ class QueryBuilder:
   "mood": [],
   "time": null,
   "location": null,
+  "location_confidence": 0.0,
   "requirements": ["상의 변경"],
   "requirements_en": ["different top item"],
   "constraints": ["니트 제외"],
   "target_detail_cats": [],
   "avoid_detail_cats": ["Knitwear"],
+  "resolved_styles": {{
+    "primary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }},
+    "secondary": {{
+      "style": "",
+      "location_score": 0.0,
+      "mood_score": 0.0,
+      "final_score": 0.0,
+      "source": [],
+      "reason": ""
+    }}
+  }},
+  "style_candidates": [],
   "prefer_brightness": null
 }}
 """
@@ -564,63 +693,17 @@ class QueryBuilder:
         # 프롬프트 생성
         prompt = self._build_prompt(original_text, feedbacks)
 
-        # Solar Pro 3 API 호출
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.3,
-            "max_tokens": 250
-        }
-
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=30
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                reasoning_effort=self.reasoning_effort,
+                stream=False,
             )
-            response.raise_for_status()
-
-            result = response.json()
-            content = result["choices"][0]["message"]["content"]
-
-            # JSON 추출 (코드 블록 및 추가 텍스트 제거)
-            content = content.strip()
-
-            # ```json ... ``` 코드 블록 제거
-            if content.startswith("```"):
-                lines = content.split("\n")
-                # json 시작과 ``` 끝 사이의 내용만 추출
-                start_idx = 1  # ```json 다음 줄부터
-                end_idx = len(lines)
-                for i in range(1, len(lines)):
-                    if lines[i].strip().startswith("```"):
-                        end_idx = i
-                        break
-                content = "\n".join(lines[start_idx:end_idx])
-
-            # JSON 부분만 추출 (### 등 추가 설명 제거)
-            json_lines = []
-            in_json = False
-            for line in content.split("\n"):
-                if line.strip().startswith("{"):
-                    in_json = True
-                if in_json:
-                    json_lines.append(line)
-                if line.strip().startswith("}"):
-                    break
-
-            content = "\n".join(json_lines)
-
-            # JSON 파싱
-            parsed = json.loads(content)
+            content = getattr(response.choices[0].message, "content", "")
+            if not content:
+                raise ValueError("combine_with_llm: empty content response")
+            parsed = self._parse_json_from_model_output(content, "combine_with_llm")
             return parsed
 
         except Exception as e:
@@ -630,6 +713,461 @@ class QueryBuilder:
                 "combined_query": f"{original_text}. {' '.join(feedbacks)}",
                 "reasoning": "API failure - simple concatenation"
             }
+
+    def _parse_json_from_model_output(self, content: str, source: str) -> Dict[str, Any]:
+        """
+        LLM 응답에서 JSON 객체만 안전하게 추출해 파싱.
+        - 코드블록 제거
+        - JSON 균형 추출
+        - 후행 쉼표 정리
+        - 따옴표 누락 key 보정(기본 키 집합 한정)
+        - 실패 시 예외를 그대로 전달
+        """
+        if not isinstance(content, str):
+            raise ValueError(f"{source}: model response content is not str")
+
+        raw = content
+        content = self._strip_markdown_wrappers(raw)
+        content = self._normalize_json_text(content)
+
+        candidates = self._extract_json_candidates(content)
+        if not candidates:
+            candidates = self._extract_json_candidates(raw)
+        if not candidates:
+            outer = self._extract_outer_json_block(raw)
+            if outer:
+                candidates.append(outer)
+
+        parse_trace = []
+        for candidate in candidates:
+            candidate = self._clean_json_candidate(candidate)
+            if not candidate:
+                continue
+            parse_errors = []
+            try:
+                parsed = json.loads(candidate)
+                coerced = self._coerce_json_payload(parsed)
+                if coerced is not None:
+                    return coerced
+                parse_errors.append("json: parsed_non_dict")
+            except Exception as e:
+                parse_errors.append(f"json: {e}")
+
+            try:
+                parsed = ast.literal_eval(candidate)
+                coerced = self._coerce_json_payload(parsed)
+                if coerced is not None:
+                    return coerced
+                parse_errors.append("ast: parsed_non_dict")
+            except Exception as e:
+                parse_errors.append(f"ast: {e}")
+
+            repaired = self._repair_json(candidate)
+            try:
+                parsed = json.loads(repaired)
+                coerced = self._coerce_json_payload(parsed)
+                if coerced is not None:
+                    return coerced
+                parse_errors.append("json_repair: parsed_non_dict")
+            except Exception as e:
+                parse_errors.append(f"json_repair: {e}")
+
+            try:
+                parsed = ast.literal_eval(repaired)
+                coerced = self._coerce_json_payload(parsed)
+                if coerced is not None:
+                    return coerced
+                parse_errors.append("ast_repair: parsed_non_dict")
+            except Exception as e:
+                parse_errors.append(f"ast_repair: {e}")
+            parse_trace.append(f"candidate={candidate[:200]} | errors={parse_errors}")
+
+        # 파싱 실패 시 소스별 fallback(비정상 응답/노이즈)로 복구
+        if source == "refine_original_query":
+            fallback = self._build_refine_fallback(raw)
+            if fallback:
+                return fallback
+        if source == "combine_with_llm":
+            fallback = self._build_combine_fallback(raw)
+            if fallback:
+                return fallback
+
+        # 디버깅용: 에러 발생 전에 원본 텍스트의 일부를 표시
+        raise ValueError(
+            f"{source}: JSON parse failed. raw={raw[:400]}, candidate_count={len(candidates)}, candidate_errors={parse_trace}"
+        )
+
+    @staticmethod
+    def _coerce_json_payload(payload: Any) -> Optional[Dict[str, Any]]:
+        """
+        파서 결과를 dict로 정규화
+        - dict: 그대로 사용
+        - list/tuple: 첫 번째 dict 사용
+        - 그 외: None
+        """
+        if isinstance(payload, dict):
+            return payload
+        if isinstance(payload, (list, tuple)):
+            for item in payload:
+                if isinstance(item, dict):
+                    return item
+        return None
+
+    @staticmethod
+    def _extract_outer_json_block(content: str) -> Optional[str]:
+        if not isinstance(content, str):
+            return None
+        start = content.find("{")
+        if start < 0:
+            return None
+        return QueryBuilder._extract_balanced_json(content[start:])
+
+    @staticmethod
+    def _extract_json_field(content: str, field: str) -> Optional[str]:
+        if not isinstance(content, str):
+            return None
+
+        # key 패턴: "field", 'field', field
+        marker_pattern = re.compile(
+            rf'(?<!\w)(?:["\']?{re.escape(field)}["\']?)\s*:'
+        )
+        m = marker_pattern.search(content)
+        if not m:
+            return None
+        idx = m.start()
+        if idx < 0:
+            return None
+        colon = m.end() - 1
+        if colon < 0:
+            return None
+
+        rest = content[colon + 1 :].lstrip()
+        if not rest:
+            return None
+
+        # 문자열 값
+        if rest[0] in {'"', "'"}:
+            quote = rest[0]
+            escape = False
+            i = 1
+            buff: List[str] = []
+            while i < len(rest):
+                ch = rest[i]
+                if escape:
+                    buff.append(ch)
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote:
+                    return "".join(buff).strip()
+                else:
+                    buff.append(ch)
+                i += 1
+            return None
+
+        # 객체/배열 값
+        if rest[0] == "{":
+            segment = QueryBuilder._extract_balanced_json_segment(rest, "{", "}")
+            if segment:
+                return segment
+        if rest[0] == "[":
+            segment = QueryBuilder._extract_balanced_json_segment(rest, "[", "]")
+            if segment:
+                return segment
+
+        # 단일 스칼라 값
+        match = re.match(r"[^,\]\}]+", rest, re.DOTALL)
+        if not match:
+            return None
+        return match.group(0).strip().strip('"').strip("'")
+
+    def _build_combine_fallback(self, raw_content: str) -> Optional[Dict[str, str]]:
+        combined_query = self._extract_json_field(raw_content, "combined_query")
+        reasoning = self._extract_json_field(raw_content, "reasoning")
+
+        text = raw_content.strip()
+        if not combined_query:
+            combined_query = self._first_non_empty_line(text)
+        if not combined_query:
+            return None
+
+        return {
+            "combined_query": combined_query.strip(),
+            "reasoning": reasoning or "fallback_parsing",
+        }
+
+    def _build_refine_fallback(self, raw_content: str) -> Dict[str, Any]:
+        text = self._clean_text_for_llm(raw_content)
+        requirements: List[str] = []
+        if text:
+            requirements.append(text[:120].strip())
+
+        return {
+            "mood": [],
+            "time": None,
+            "location": None,
+            "requirements": requirements,
+            "requirements_en": [req for req in requirements if req],
+            "constraints": [],
+            "target_detail_cats": [],
+            "avoid_detail_cats": [],
+            "location_confidence": 0.0,
+            "resolved_styles": {},
+            "style_candidates": [],
+            "prefer_brightness": None,
+        }
+
+    @staticmethod
+    def _clean_text_for_llm(content: str) -> str:
+        if not isinstance(content, str):
+            return ""
+        text = content.strip()
+        text = text.replace("```", "").replace("\n", " ")
+        # 코드블록/설명형 텍스트 제거
+        text = re.sub(r"\[[^\]]*?\]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _first_non_empty_line(content: str) -> str:
+        for line in content.splitlines():
+            s = line.strip()
+            if s:
+                return s
+        return ""
+
+    @staticmethod
+    def _get_detail_cat_rules() -> Dict[str, List[str]]:
+        return DETAIL_CAT_RULES
+
+    @staticmethod
+    def _strip_markdown_wrappers(content: str) -> str:
+        if not isinstance(content, str):
+            return ""
+
+        text = content.strip()
+        block_pattern = re.compile(r"```(?:json|JSON)?\s*?\n(.*?)(?:\n```|$)", re.DOTALL)
+        matches = block_pattern.findall(text)
+        if matches:
+            for match in matches:
+                candidate = match.strip()
+                if candidate:
+                    return candidate
+
+        # 개행 없이 닫힌 블록이 오는 케이스: ```json ... ```
+        block_pattern = re.compile(r"```(?:json|JSON)?\s*(.*?)(?:\s*```|$)", re.DOTALL)
+        matches = block_pattern.findall(text)
+        if matches:
+            for match in matches:
+                candidate = match.strip()
+                if candidate:
+                    return candidate
+
+        # 시작 backtick이 붙은 응답: ```json { ... } 또는 ``` { ... }
+        if text.startswith("```"):
+            text = text[3:].lstrip()
+            if text.lower().startswith("json"):
+                text = text[4:].lstrip()
+            text = text.lstrip()
+            text = re.sub(r"\n*```\s*$", "", text).strip()
+            return text
+
+        # 닫는 fence만 누락된 케이스: 마지막에서부터 자르기
+        text = text.rstrip()
+        if text.startswith("```json"):
+            text = text[7:].strip()
+        if text.startswith("```"):
+            text = text[3:].strip()
+        text = re.sub(r"```$", "", text).strip()
+        return text
+
+    @staticmethod
+    def _normalize_json_text(content: str) -> str:
+        """
+        JSON 파싱을 위한 입력 정규화.
+        - 앞뒤 불필요 백틱/코드블록 토큰 제거
+        - 잘못 붙은 따옴표 토큰 정리
+        """
+        if not isinstance(content, str):
+            return ""
+
+        text = content.strip()
+        text = text.replace("\r\n", "\n")
+        text = text.replace("`", "")
+        return text
+
+    @staticmethod
+    def _extract_balanced_json(content: str) -> Optional[str]:
+        start = content.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        in_string = False
+        quote_char = ""
+        escape = False
+        for i in range(start, len(content)):
+            ch = content[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quote_char:
+                    in_string = False
+                continue
+
+            if ch in ("'", '"'):
+                in_string = True
+                quote_char = ch
+                continue
+
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start:i + 1]
+        return None
+
+    @staticmethod
+    def _extract_balanced_json_segment(content: str, start_char: str, end_char: str) -> Optional[str]:
+        if not isinstance(content, str) or not start_char or not end_char:
+            return None
+        start = content.find(start_char)
+        if start < 0:
+            return None
+
+        depth = 0
+        in_string = False
+        quote_char = ""
+        escape = False
+        for i in range(start, len(content)):
+            ch = content[i]
+            if in_string:
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == quote_char:
+                    in_string = False
+                continue
+
+            if ch in ("'", '"'):
+                in_string = True
+                quote_char = ch
+                continue
+
+            if ch == start_char:
+                depth += 1
+            elif ch == end_char:
+                depth -= 1
+                if depth == 0:
+                    return content[start:i + 1]
+        return None
+
+    def _extract_json_candidates(self, content: str) -> List[str]:
+        """JSON 파싱 후보 문자열 리스트 생성(중복 제거, 우선순위 유지)."""
+        candidates: List[str] = []
+        seen = set()
+
+        if not isinstance(content, str):
+            return []
+
+        # 코드블록에서 추출
+        block_pattern = re.compile(r"```(?:json|JSON)?\s*?\n(.*?)(?:\n```|$)", re.DOTALL)
+        for block in block_pattern.findall(content):
+            block = block.strip()
+            if not block:
+                continue
+            block = self._clean_json_candidate(block)
+            if block not in seen:
+                candidates.append(block)
+                seen.add(block)
+
+        # 균형 JSON 블록 추출 (코드블록 안/밖 모두 대응)
+        for block in self._extract_balanced_json_candidates(content):
+            block = block.strip()
+            if block and block not in seen:
+                candidates.append(block)
+                seen.add(block)
+
+        # 최종 정리 문자열
+        if content and content not in seen:
+            candidates.append(content)
+            seen.add(content)
+
+        # 공백/개행 정리 후보
+        normalized = content.strip()
+        if normalized and normalized != content and normalized not in seen:
+            candidates.append(normalized)
+            seen.add(normalized)
+
+        return [c for c in candidates if c.strip()]
+
+    @staticmethod
+    def _extract_balanced_json_candidates(content: str) -> List[str]:
+        """문자열 내 여러 JSON 객체를 균형 기반으로 추출."""
+        if not isinstance(content, str):
+            return []
+
+        blocks: List[str] = []
+        idx = 0
+        n = len(content)
+        while idx < n:
+            if content[idx] != "{":
+                idx += 1
+                continue
+            block = QueryBuilder._extract_balanced_json(content[idx:])
+            if not block:
+                idx += 1
+                continue
+            if block not in blocks:
+                blocks.append(block)
+            idx += content[idx:].find(block) + len(block)
+            if len(block) == 0:
+                idx += 1
+
+        return blocks
+
+    @staticmethod
+    def _clean_json_candidate(content: str) -> str:
+        text = content.strip()
+        # trailing comma 제거
+        text = re.sub(r",\s*([}\]])", r"\1", text)
+        # 라인 단위 주석 제거 (모델이 실수로 남기는 경우)
+        cleaned_lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("//") or stripped.startswith("#"):
+                continue
+            cleaned_lines.append(line)
+        text = "\n".join(cleaned_lines).strip()
+        return text
+
+    @staticmethod
+    def _repair_json(content: str) -> str:
+        text = content
+        # key가 따옴표 없이 나오는 케이스 보정 (예: requirements: [...])
+        text = re.sub(
+            r'([,{]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)',
+            r'\1"\2"\3',
+            text
+        )
+        # single-quoted key 처리
+        text = re.sub(
+            r'([,{]\s*)\'([A-Za-z_][A-Za-z0-9_]*)\'(\s*:)',
+            r'\1"\2"\3',
+            text
+        )
+        # single-quoted 문자열 값 처리
+        text = re.sub(
+            r':\s*\'([^\'\\]*(?:\\.[^\'\\]*)*)\'',
+            lambda m: f': "{m.group(1)}"',
+            text
+        )
+        text = re.sub(r",\s*([}\]])", r"\1", text)
+        return text
 
     def _build_prompt(self, original_text: str, feedbacks: List[str]) -> str:
         """Solar Pro 3 프롬프트 생성 (최적화된 버전)"""

@@ -4,19 +4,29 @@
         "confidence": 0.0,
         "evidence": []
     },
-    "location": {
-        "value": [],
-        "confidence": 0.0,
-        "evidence": []
-    },
-    "mood": { 
+    "season": {
         "value": [],
         "confidence": 0.0,
         "evidence": []
     },
     "color": {
         "value": [],
-        "confidence": 0.0, 
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "size_fit": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "location": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
+    "mood": {
+        "value": [],
+        "confidence": 0.0,
         "evidence": []
     },
     "user_constraints": {

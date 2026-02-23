@@ -1,5 +1,11 @@
 """
 CloZ-AI 통합 파이프라인
+
+생성 파이프라인(팀) + 피드백 파이프라인(내 코드)을 하나로 통합.
+
+실행:
+    python -m src.pipeline
+
 전체 흐름:
     프롬프트 입력 (자연어)
     -> UnderstandModel이 JSON 파싱
@@ -21,8 +27,15 @@ import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+
+# 프로젝트 루트 경로 설정
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from loguru import logger
-from generation_pipeline import (
+
+from src.generation_pipeline import (
     CLIPEncoder,
     FashionRecommender,
     OutfitPlanner,
@@ -30,26 +43,34 @@ from generation_pipeline import (
     UnderstandModel,
     load_config,
 )
-from feedback_pipeline.agents.manager_agent import ManagerAgent, ManagerConfig
-from feedback_pipeline.models.feedback import (
+from src.feedback_pipeline.agents.manager_agent import ManagerAgent, ManagerConfig
+from src.feedback_pipeline.models.feedback import (
     FeedbackInput,
     FeedbackScope,
     OutfitSet,
     ItemInfo,
     ActionType,
 )
-from feedback_pipeline.models.session import SessionStatus
-from feedback_pipeline.interfaces.real_generation_model import RealGenerationModel
+from src.feedback_pipeline.models.session import SessionStatus
+from src.feedback_pipeline.interfaces.real_generation_model import RealGenerationModel
 
-# 프로젝트 루트 경로 설정
-project_root = Path(__file__).parents[1]
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
 
 class CloZPipeline:
+    """
+    CloZ-AI 통합 파이프라인.
+
+    생성 -> 피드백 -> 재생성 순환을 관리.
+    """
+
     def __init__(self, config_path: str = None):
+        """
+        Args:
+            config_path: generation_model.yaml 경로.
+                         None이면 configs/generation_model.yaml 사용.
+        """
+        # 설정 로드
         if config_path is None:
-            config_path = project_root / "configs" / "generation_model.yaml" # generation_model에 대한 설정 파일 경로
+            config_path = project_root / "configs" / "generation_model.yaml"
         self.gen_config = load_config(str(config_path))
 
         logger.info("Initializing generation pipeline components...")
@@ -199,20 +220,25 @@ class CloZPipeline:
 
     # ==================== Interactive CLI ====================
 
-    def interactive_session(self, user_id: str = "default"): # 대화형 CLI
+    def interactive_session(self, user_id: str = "default"):
+        """
+        대화형 CLI.
+
+        기존 feedback_pipeline/main.py의 mock을 실제 파이프라인으로 대체.
+        """
         self._clear_screen()
         self._print_header("CloZ-AI Pipeline")
 
         prompt = input("\n어떤 코디를 추천받고 싶으신가요?\n입력: ").strip()
         if not prompt:
             prompt = "캐주얼 데일리 코디 추천해줘"
-            logger.info(f"기본값 사용: {prompt}")
+            print(f"기본값 사용: {prompt}")
 
-        logger.info("\n코디를 생성하고 있습니다...")
+        print("\n코디를 생성하고 있습니다...")
         result = self.run(prompt, user_id)
 
         if not result["session"]:
-            logger.error(f"\n[오류] {result['generation_result'].message}")
+            print(f"\n[오류] {result['generation_result'].message}")
             return
 
         session = result["session"]
@@ -245,10 +271,10 @@ class CloZPipeline:
             feedback_text = input("\n어떤 점이 마음에 안 드시나요?\n입력: ").strip()
 
             if not feedback_text:
-                logger.info("피드백을 입력해주세요.")
+                print("피드백을 입력해주세요.")
                 continue
 
-            logger.info("\n분석 중...")
+            print("\n분석 중...")
             fb_result = self.process_feedback(
                 session_id=session.session_id,
                 user_id=user_id,
@@ -259,8 +285,8 @@ class CloZPipeline:
             )
 
             decision = fb_result["decision"]
-            logger.info(f"\n[결정]: {decision.action.value}")
-            logger.info(f"[메시지]: {decision.message}")
+            print(f"\n[결정]: {decision.action.value}")
+            print(f"[메시지]: {decision.message}")
 
             if decision.action == ActionType.APPROVED:
                 self.manager.end_session(session.session_id, SessionStatus.COMPLETED)
@@ -268,7 +294,7 @@ class CloZPipeline:
 
             elif decision.action == ActionType.BUYING:
                 if decision.buying_recommendations:
-                    logger.info("\n[상품 추천 목록]:")
+                    print("\n[상품 추천 목록]:")
                     grouped = getattr(decision.buying_recommendations, "grouped_products", None)
                     printed = False
                     if grouped:
@@ -276,13 +302,13 @@ class CloZPipeline:
                             if not group_items:
                                 continue
                             printed = True
-                            logger.info(f"  - [{group_name}]")
+                            print(f"  - [{group_name}]")
                             for i, prod in enumerate(group_items[:3], 1):
                                 if hasattr(prod, "to_dict"):
                                     prod = prod.to_dict()
                                 name = prod.get("product_name", "")
                                 brand = prod.get("brand", "")
-                                logger.info(f"    {i}. {name} ({brand})")
+                                print(f"    {i}. {name} ({brand})")
                     if not printed:
                         recs = getattr(decision.buying_recommendations, "products", [])
                         for i, prod in enumerate(recs, 1):
@@ -290,9 +316,9 @@ class CloZPipeline:
                                 prod = prod.to_dict()
                             name = prod.get("product_name", "")
                             brand = prod.get("brand", "")
-                            logger.info(f"  {i}. {name} ({brand})")
+                            print(f"  {i}. {name} ({brand})")
                         if not recs:
-                            logger.info("  (조건에 맞는 추천 상품이 없습니다)")
+                            print("  (조건에 맞는 추천 상품이 없습니다)")
                 self.manager.end_session(session.session_id, SessionStatus.BUYING_REDIRECT)
                 break
 
@@ -335,6 +361,9 @@ class CloZPipeline:
         if outfit.image_url:
             print(f"  이미지: {outfit.image_url}")
         if gen_result and gen_result.metadata:
+            video_path = gen_result.metadata.get("video_preview_path")
+            if video_path:
+                print(f"  영상: {video_path}")
             score = gen_result.metadata.get("best_score", 0)
             if score:
                 print(f"  점수: {score:.4f}")
@@ -351,7 +380,6 @@ class CloZPipeline:
         print("1. 전체 (FULL)")
         print("2. 상의 (TOP)")
         print("3. 하의 (BOTTOM)")
-        print("4. 아우터 (OUTER)")
 
         choice = input("\n선택 (기본값 1): ").strip()
         if not choice:
@@ -361,11 +389,10 @@ class CloZPipeline:
             "1": FeedbackScope.FULL,
             "2": FeedbackScope.TOP,
             "3": FeedbackScope.BOTTOM,
-            "4": FeedbackScope.OUTER,
         }
 
-        # 공백/쉼표 모두 허용: "3 4", "3,4", "3, 4"
-        indices = re.findall(r"[1-4]", choice)
+        # 공백/쉼표 모두 허용: "2 3", "2,3", "2, 3"
+        indices = re.findall(r"[1-3]", choice)
         scopes = [mapping[idx] for idx in indices if idx in mapping]
         return scopes if scopes else [FeedbackScope.FULL]
 

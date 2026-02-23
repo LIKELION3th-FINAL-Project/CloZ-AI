@@ -10,6 +10,12 @@ sys.path.append(str(Path(__file__).parent.parent.parent / "embedding_generator")
 from generate_fashionclip_embeddings import FashionCLIPEmbedder
 
 from ..interfaces.wardrobe_checker import WardrobeCheckerInterface, WardrobeCheckResult
+from ..utils.detail_category import (
+    DETAIL_ALIAS_TO_CANONICAL,
+    MAIN_CATEGORY_ALIASES,
+    normalize_detail_category,
+    normalize_main_category,
+)
 
 try:
     import chromadb
@@ -26,6 +32,7 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
     FashionCLIP 임베딩으로 사용자 옷장에서 피드백 요구사항과 유사한 아이템 검색
     이전 추천과 다른 새로운 재생성 후보 반환
     """
+    DETAIL_FIELD = "detail_cat"
 
     def __init__(
         self,
@@ -72,6 +79,79 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             except Exception as e:
                 print(f"[경고] FashionCLIP 로드 실패: {e}")
                 self.embedder = None
+
+        self._main_cat_alias_to_havati = MAIN_CATEGORY_ALIASES
+        self._detail_alias_to_canonical = DETAIL_ALIAS_TO_CANONICAL
+
+    @staticmethod
+    def _meta_values(meta: Optional[Dict[str, Any]], *keys: str) -> List[str]:
+        if not meta:
+            return []
+        values: List[str] = []
+        for key in keys:
+            raw = meta.get(key)
+            if raw is None:
+                continue
+            if isinstance(raw, (list, tuple, set)):
+                values.extend([str(v).strip() for v in raw if str(v).strip()])
+            else:
+                candidate = str(raw).strip()
+                if candidate:
+                    values.append(candidate)
+        deduped = []
+        for value in values:
+            if value not in deduped:
+                deduped.append(value)
+        return deduped
+
+    @staticmethod
+    def _normalize_main_category(value: str) -> str:
+        return normalize_main_category(value)
+
+    def _normalize_detail_category(self, value: str) -> str:
+        return normalize_detail_category(value)
+
+    @staticmethod
+    def _main_filter_condition(main_categories: List[str]) -> Optional[Dict[str, Any]]:
+        if not main_categories:
+            return None
+        if len(main_categories) == 1:
+            cat = main_categories[0]
+            return {
+                "$or": [
+                    {"broad_cat": cat},
+                    {"category_main": cat},
+                    {"broad_cat": cat.lower()},
+                    {"category_main": cat.lower()},
+                ]
+            }
+        return {
+            "$or": [
+                {
+                    "$or": [
+                        {"broad_cat": cat},
+                        {"category_main": cat},
+                        {"broad_cat": cat.lower()},
+                        {"category_main": cat.lower()},
+                    ]
+                }
+                for cat in main_categories
+            ]
+        }
+
+    @staticmethod
+    def _detail_filter_condition(detail_cats: List[str]) -> Optional[Dict[str, Any]]:
+        if not detail_cats:
+            return None
+        if len(detail_cats) == 1:
+            detail = detail_cats[0]
+            return {EmbeddingWardrobeChecker.DETAIL_FIELD: detail}
+        return {
+            "$or": [
+                {EmbeddingWardrobeChecker.DETAIL_FIELD: detail}
+                for detail in detail_cats
+            ]
+        }
 
     def can_fulfill(
         self,
@@ -122,20 +202,45 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         seen_ids = set()
         total_results = 0
         avoid_detail_lower = {str(x).strip().lower() for x in (avoid_detail_cats or []) if str(x).strip()}
+        normalized_target_detail_cats = []
+        if target_detail_cats:
+            for raw in target_detail_cats:
+                normalized = self._normalize_detail_category(raw)
+                if normalized:
+                    normalized_target_detail_cats.append(normalized)
+            normalized_target_detail_cats = list(dict.fromkeys(normalized_target_detail_cats))
+        print(
+            "  [WardrobeChecker] query="
+            f"'{query_text}', target_categories={target_categories or []}, "
+            f"target_detail_cats={normalized_target_detail_cats}, avoid_detail_cats={sorted(avoid_detail_lower)}"
+        )
 
         def _make_where_filter(detail_cat: Optional[str] = None):
             filters = []
             if user_id:
                 filters.append({"user_id": user_id})
             if target_categories:
-                if len(target_categories) == 1:
-                    filters.append({"broad_cat": target_categories[0]})
-                else:
-                    filters.append({"$or": [{"broad_cat": cat} for cat in target_categories]})
+                normalized_main = [
+                    self._normalize_main_category(cat)
+                    for cat in target_categories
+                ]
+                normalized_main = [cat for cat in normalized_main if cat]
+                normalized_main = normalized_main or list(dict.fromkeys(target_categories))
+                main_filter = EmbeddingWardrobeChecker._main_filter_condition(normalized_main)
+                if main_filter:
+                    filters.append(main_filter)
             if detail_cat:
-                filters.append({"detail_cat": detail_cat})
-            elif target_detail_cats and len(target_detail_cats) == 1:
-                filters.append({"detail_cat": target_detail_cats[0]})
+                normalized_detail = self._normalize_detail_category(detail_cat)
+                if normalized_detail:
+                    detail_filter = self._detail_filter_condition([normalized_detail])
+                    if detail_filter:
+                        filters.append(detail_filter)
+            elif normalized_target_detail_cats and len(normalized_target_detail_cats) == 1:
+                normalized_detail = normalized_target_detail_cats[0]
+                if normalized_detail:
+                    detail_filter = self._detail_filter_condition([normalized_detail])
+                    if detail_filter:
+                        filters.append(detail_filter)
 
             if len(filters) == 1:
                 return filters[0]
@@ -158,7 +263,9 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                     if cid in seen_ids:
                         continue
                     meta = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
-                    detail_cat = str(meta.get("detail_cat", "")).strip().lower()
+                    detail_value = str(meta.get(self.DETAIL_FIELD, "") or "").strip()
+                    normalized_details = [self._normalize_detail_category(detail_value)] if detail_value else []
+                    detail_cat = str(normalized_details[0]).strip().lower() if normalized_details else ""
                     if avoid_detail_lower and detail_cat in avoid_detail_lower:
                         continue
                     seen_ids.add(cid)
@@ -171,16 +278,21 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
 
         try:
             # detail_cat 복수 지정 시 카테고리별로 분리 검색/분리 bypass 적용
-            if target_detail_cats and len(target_detail_cats) > 1:
-                for detail_cat in target_detail_cats:
+            if normalized_target_detail_cats and len(normalized_target_detail_cats) > 1:
+                for detail_cat in normalized_target_detail_cats:
+                    where_filter = _make_where_filter(detail_cat=detail_cat)
                     results = self.wardrobe_collection.query(
                         query_embeddings=[query_embedding],
                         n_results=20,
-                        where=_make_where_filter(detail_cat=detail_cat),
+                        where=where_filter,
                     )
                     detail_total = len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0
                     total_results += detail_total
                     detail_bypass = detail_total <= 3
+                    print(
+                        f"  [WardrobeChecker] detail='{detail_cat}' raw_hits={detail_total}, "
+                        f"bypass={detail_bypass}, where={where_filter}"
+                    )
                     if detail_bypass and detail_total > 0:
                         bypass_details.append(f"{detail_cat}:{detail_total}")
                         print(
@@ -188,20 +300,28 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                             "→ 임베딩 비교 생략, 전부 반환"
                         )
                     part_candidates, part_sims, _ = _collect_from_results(results, detail_bypass)
+                    print(
+                        f"  [WardrobeChecker] detail='{detail_cat}' kept_after_threshold={len(part_candidates)}"
+                    )
                     candidates.extend(part_candidates)
                     all_similarities.extend(part_sims)
             else:
+                where_filter = _make_where_filter()
                 results = self.wardrobe_collection.query(
                     query_embeddings=[query_embedding],
                     n_results=20,
-                    where=_make_where_filter(),
+                    where=where_filter,
                 )
                 total_results = len(results['ids'][0]) if results['ids'] and results['ids'][0] else 0
-                bypass_threshold = bool(target_detail_cats) and total_results <= 3
+                bypass_threshold = bool(normalized_target_detail_cats) and total_results <= 3
+                print(
+                    f"  [WardrobeChecker] raw_hits={total_results}, bypass={bypass_threshold}, where={where_filter}"
+                )
                 if bypass_threshold and total_results > 0:
                     bypass_details.append(f"all:{total_results}")
                     print(f"  [INFO] 세부카테고리 결과 {total_results}개 (<=3) → 임베딩 비교 생략, 전부 반환")
                 part_candidates, part_sims, _ = _collect_from_results(results, bypass_threshold)
+                print(f"  [WardrobeChecker] kept_after_threshold={len(part_candidates)}")
                 candidates.extend(part_candidates)
                 all_similarities.extend(part_sims)
 
@@ -221,25 +341,44 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
             previous_items = context['previous_items']
 
         if previous_items and candidates:
+            before_prev_filter = len(candidates)
             candidates = self._filter_previous_items(candidates, previous_items)
+            print(
+                f"  [WardrobeChecker] previous_item_filter removed={before_prev_filter - len(candidates)}, "
+                f"remaining={len(candidates)}"
+            )
 
         # 부정 카테고리 기반 요청에서 후보가 과소(<=1)하면
         # 동일 파트 내 비제외 카테고리로 fallback 확장한다.
         if avoid_detail_lower and target_categories and len(target_categories) == 1 and len(candidates) <= 1:
             try:
+                fallback_where = _make_where_filter(detail_cat=None)
                 fallback_results = self.wardrobe_collection.query(
                     query_embeddings=[query_embedding],
                     n_results=50,
-                    where=_make_where_filter(detail_cat=None),
+                    where=fallback_where,
+                )
+                fallback_raw = len(fallback_results['ids'][0]) if fallback_results['ids'] and fallback_results['ids'][0] else 0
+                print(
+                    f"  [WardrobeChecker] fallback_triggered raw_hits={fallback_raw}, where={fallback_where}"
                 )
                 fallback_candidates, _, _ = _collect_from_results(fallback_results, bypass_threshold=True)
+                print(
+                    f"  [WardrobeChecker] fallback_kept_before_prev_filter={len(fallback_candidates)}"
+                )
                 if previous_items and fallback_candidates:
+                    fallback_before_prev = len(fallback_candidates)
                     fallback_candidates = self._filter_previous_items(fallback_candidates, previous_items)
+                    print(
+                        f"  [WardrobeChecker] fallback_prev_filter removed="
+                        f"{fallback_before_prev - len(fallback_candidates)}, remaining={len(fallback_candidates)}"
+                    )
                 # 기존 후보 유지 + 중복 제거 후 확장
                 merged = {c["id"]: c for c in candidates}
                 for c in fallback_candidates:
                     merged.setdefault(c["id"], c)
                 candidates = list(merged.values())
+                print(f"  [WardrobeChecker] fallback_merged_total={len(candidates)}")
             except Exception:
                 pass
 
@@ -250,6 +389,12 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         # matching_items는 아이템 ID 문자열 리스트로 반환
         matching_items_ids = [c['id'] for c in candidates]
         candidate_pool = self._build_candidate_pool(candidates)
+        pool_counts = {k: len(v) for k, v in candidate_pool.items()}
+        print(f"  [WardrobeChecker] final_candidates={len(candidates)}, pool_counts={pool_counts}")
+        for scope in ("TOP", "BOTTOM", "OUTER"):
+            scoped = candidate_pool.get(scope, [])
+            if scoped:
+                print(f"  [WardrobeChecker] pool_preview[{scope}]={scoped[:3]}")
 
         if bypass_details:
             reason = (
@@ -270,12 +415,13 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
         )
 
     def _build_candidate_pool(self, candidates: List[Dict[str, Any]]) -> Dict[str, List[str]]:
-        pool: Dict[str, List[str]] = {}
+        pool_with_scores: Dict[str, List[Dict[str, Any]]] = {}
         for candidate in candidates:
             cid = str(candidate.get("id", ""))
             filename = cid.split("/")[-1] if "/" in cid else cid.split(":")[-1]
             meta = candidate.get("metadata", {}) or {}
-            broad = str(meta.get("broad_cat", "")).lower()
+            broad_candidates = self._meta_values(meta, "broad_cat", "category_main")
+            broad = str(broad_candidates[0]).lower() if broad_candidates else ""
 
             cat = None
             if broad in {"shirt", "top", "tops", "상의"}:
@@ -292,7 +438,28 @@ class EmbeddingWardrobeChecker(WardrobeCheckerInterface):
                 cat = "OUTER"
 
             if cat and filename:
-                pool.setdefault(cat, []).append(filename)
+                pool_with_scores.setdefault(cat, []).append({
+                    "filename": filename,
+                    "similarity": float(candidate.get("similarity", 0.0) or 0.0),
+                })
+
+        # 생성팀 전달 정책: 파트별 후보는 최대 3개로 제한
+        pool: Dict[str, List[str]] = {}
+        for cat, items in pool_with_scores.items():
+            items.sort(key=lambda x: x["similarity"], reverse=True)
+            seen = set()
+            picked = []
+            for item in items:
+                filename = item["filename"]
+                if filename in seen:
+                    continue
+                seen.add(filename)
+                picked.append(filename)
+                if len(picked) >= 3:
+                    break
+            if picked:
+                pool[cat] = picked
+
         return pool
 
     def _filter_previous_items(

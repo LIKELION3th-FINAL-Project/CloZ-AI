@@ -4,17 +4,17 @@
         "confidence": 0.0,
         "evidence": []
     },
+    "season": {
+        "value": [],
+        "confidence": 0.0,
+        "evidence": []
+    },
     "color": {
         "value": [],
         "confidence": 0.0,
         "evidence": []
     },
     "size_fit": {
-        "value": [],
-        "confidence": 0.0,
-        "evidence": []
-    },
-    "season": {
         "value": [],
         "confidence": 0.0,
         "evidence": []

@@ -15,6 +15,13 @@ from generate_fashionclip_embeddings import FashionCLIPEmbedder
 from ..interfaces.buying_trigger import BuyingTriggerInterface, BuyingRecommendation, ProductRecommendation
 from ..models import FeedbackScope, OutfitSet
 from ..utils.color_utils import get_brightness, get_colors_by_brightness, LIGHT_COLORS, DARK_COLORS
+from ..utils.detail_category import (
+    DETAIL_ALIAS_TO_CANONICAL,
+    DETAIL_GROUPS,
+    MAIN_CATEGORY_ALIASES,
+    normalize_detail_category,
+    normalize_main_category,
+)
 
 try:
     import chromadb
@@ -33,6 +40,9 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
     가중치:
         similarity * 0.55 + color_bonus(0.30) + style_bonus(max 0.15) + brightness_bonus(max 0.15)
     """
+    DETAIL_FIELD = "category_sub"
+
+    _DEFAULT_DETAIL_ALIAS_TO_CANONICAL = DETAIL_ALIAS_TO_CANONICAL
 
     def __init__(
         self,
@@ -86,6 +96,9 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
 
         # 메타데이터 로드
         self._load_metadata()
+        self._detail_alias_to_canonical = dict(self._DEFAULT_DETAIL_ALIAS_TO_CANONICAL)
+        self._main_cat_alias_to_havati = MAIN_CATEGORY_ALIASES
+        self._detail_groups = DETAIL_GROUPS
 
     def _load_metadata(self):
         """Havati 상품 메타데이터 로드 (color, style_tags 포함)"""
@@ -198,6 +211,10 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             f"{target_detail_cats}, avoid_detail_cats={avoid_detail_cats}, "
             f"colors={prefer_colors}, brightness={prefer_brightness}"
         )
+        print(
+            f"  [BuyingTrigger] search_query='{search_query}', "
+            f"target_category={target_category}, limit={limit}"
+        )
 
         # FashionCLIP으로 쿼리 임베딩 생성
         try:
@@ -225,6 +242,8 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 n_results=limit * 5,
                 where=where_filter
             )
+            raw_hits = len(results["ids"][0]) if results.get("ids") and results["ids"][0] else 0
+            print(f"  [BuyingTrigger] raw_hits={raw_hits}, threshold={self.threshold}")
         except Exception as e:
             return BuyingRecommendation(
                 success=False,
@@ -242,6 +261,18 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             prefer_styles=prefer_styles,
             prefer_brightness=prefer_brightness,
         )
+        print(f"  [BuyingTrigger] kept_after_threshold={len(candidates)}")
+        if candidates:
+            preview = [
+                (
+                    c.get("product_id"),
+                    c.get("category_sub"),
+                    round(float(c.get("similarity", 0.0)), 3),
+                    round(float(c.get("final_score", 0.0)), 3),
+                )
+                for c in candidates[:5]
+            ]
+            print(f"  [BuyingTrigger] candidate_preview={preview}")
 
         fallback_used = False
         if not candidates:
@@ -256,6 +287,11 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     n_results=max(limit * 10, 30),
                     where=fallback_where,
                 )
+                fallback_raw_hits = len(fallback_results["ids"][0]) if fallback_results.get("ids") and fallback_results["ids"][0] else 0
+                print(
+                    f"  [BuyingTrigger] fallback_filter={fallback_where}, "
+                    f"fallback_raw_hits={fallback_raw_hits}"
+                )
                 candidates = self._extract_candidates_from_query_results(
                     results=fallback_results,
                     avoid_colors=avoid_colors,
@@ -265,6 +301,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     prefer_brightness=prefer_brightness,
                     min_similarity=None,
                 )
+                print(f"  [BuyingTrigger] fallback_kept={len(candidates)}")
                 fallback_used = bool(candidates)
             except Exception:
                 pass
@@ -290,6 +327,10 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                         continue
                     selected_by_cat[detail_cat].append(c)
                     selected_ids.add(pid)
+                print(
+                    f"  [BuyingTrigger] selected_by_cat[{detail_cat}] "
+                    f"seed_count={len(selected_by_cat[detail_cat])}"
+                )
 
             for detail_cat in target_detail_cats:
                 while len(selected_by_cat[detail_cat]) < 3:
@@ -321,6 +362,11 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                         selected_by_cat[detail_cat].append(c)
                         selected_ids.add(pid)
                         added = True
+                    if added:
+                        print(
+                            f"  [BuyingTrigger] selected_by_cat[{detail_cat}] "
+                            f"expanded_count={len(selected_by_cat[detail_cat])}"
+                        )
                     if not added:
                         break
 
@@ -329,6 +375,8 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 ordered.extend(selected_by_cat[detail_cat][:3])
             if ordered:
                 candidates = ordered
+            by_cat_counts = {cat: len(items) for cat, items in selected_by_cat.items()}
+            print(f"  [BuyingTrigger] per_detail_final_counts={by_cat_counts}")
 
         effective_limit = max(limit, len(target_detail_cats) * 3) if len(target_detail_cats) > 1 else limit
 
@@ -337,6 +385,14 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
             product = self._create_product_recommendation(candidate)
             if product:
                 products.append(product)
+        product_preview = [
+            (p.product_id, p.category_sub, round(float(p.match_score), 3))
+            for p in products[:5]
+        ]
+        print(
+            f"  [BuyingTrigger] final_products={len(products)} "
+            f"(effective_limit={effective_limit}) preview={product_preview}"
+        )
 
         grouped_products = None
         if selected_by_cat:
@@ -372,18 +428,100 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
     ) -> List[str]:
         if not detail_cats:
             return []
+        normalized = []
+        for value in detail_cats:
+            normalized_value = self._normalize_detail_category(value)
+            if normalized_value:
+                normalized.append(normalized_value)
+        normalized = list(dict.fromkeys(normalized))
+
         if not target_category:
-            return detail_cats
+            return normalized
 
-        top_cats = {"Tee", "Shirt", "Sweatshirt", "Knitwear"}
-        bottom_cats = {"Denim", "Chino", "Trousers", "Easy_pants", "Work_pants", "Short"}
-        outer_cats = {"Jacket_Blouson", "Coat", "Cardigan", "Jumper_Parka", "Padding", "Leather", "Vest"}
-        cat_to_group = {"상의": top_cats, "바지": bottom_cats, "아우터": outer_cats}
-
-        allowed = cat_to_group.get(target_category)
+        allowed = self._detail_groups.get(target_category)
         if not allowed:
-            return detail_cats
-        return [x for x in detail_cats if x in allowed]
+            return normalized
+
+        return [cat for cat in normalized if cat in allowed]
+
+    @staticmethod
+    def _meta_values(meta: Optional[Dict[str, Any]], *keys: str) -> List[str]:
+        """
+        Chroma 또는 메타 캐시에서 다양한 키로 metadata 값을 읽는다.
+        값이 list/tuple이면 flatten.
+        """
+        if not meta:
+            return []
+        result: List[str] = []
+        for key in keys:
+            raw = meta.get(key)
+            if raw is None:
+                continue
+            if isinstance(raw, (list, tuple, set)):
+                for item in raw:
+                    if item is not None:
+                        result.append(str(item))
+            else:
+                result.append(str(raw))
+        # 중복/빈값 제거
+        cleaned = []
+        for value in result:
+            candidate = value.strip()
+            if not candidate:
+                continue
+            if candidate not in cleaned:
+                cleaned.append(candidate)
+        return cleaned
+
+    @staticmethod
+    def _normalize_main_category(value: str) -> str:
+        return normalize_main_category(value)
+
+    @classmethod
+    def _normalize_detail_category(cls, value: str) -> str:
+        return normalize_detail_category(value)
+
+    @staticmethod
+    def _detail_filter_condition(detail_cats: List[str]) -> Optional[Dict[str, Any]]:
+        if not detail_cats:
+            return None
+        if len(detail_cats) == 1:
+            detail = detail_cats[0]
+            return {EmbeddingBuyingTrigger.DETAIL_FIELD: detail}
+        return {
+            "$or": [
+                {EmbeddingBuyingTrigger.DETAIL_FIELD: cat}
+                for cat in detail_cats
+            ]
+        }
+
+    @staticmethod
+    def _main_filter_condition(main_categories: List[str]) -> Optional[Dict[str, Any]]:
+        if not main_categories:
+            return None
+        if len(main_categories) == 1:
+            cat = main_categories[0]
+            return {
+                "$or": [
+                    {"category_main": cat},
+                    {"broad_cat": cat},
+                    {"category_main": cat.lower()},
+                    {"broad_cat": cat.lower()},
+                ]
+            }
+        return {
+            "$or": [
+                {
+                    "$or": [
+                        {"category_main": cat},
+                        {"broad_cat": cat},
+                        {"category_main": cat.lower()},
+                        {"broad_cat": cat.lower()},
+                    ]
+                }
+                for cat in main_categories
+            ]
+        }
 
     def _build_where_filter(
         self,
@@ -391,24 +529,33 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
         target_detail_cats: Optional[List[str]],
         single_detail_cat: Optional[str],
     ) -> Optional[Dict[str, Any]]:
-        category_to_havati = {
-            "상의": "TOPS",
-            "바지": "BOTTOMS",
-            "아우터": "OUTER",
-        }
         filters = []
-
         if target_category:
-            havati_cat = category_to_havati.get(target_category, target_category)
-            filters.append({"category_main": havati_cat})
+            normalized_main = self._normalize_main_category(target_category)
+            main_cats = [normalized_main]
+            if normalized_main.upper() != "TOPS" and normalized_main == target_category:
+                for aliases in self._main_cat_alias_to_havati.values():
+                    if target_category in aliases:
+                        main_cats.extend([a for a in aliases])
+                        break
+            if normalized_main and normalized_main.upper() == "TOPS":
+                main_cats = ["TOPS", "tops", "top", "shirts"]
+            elif normalized_main and normalized_main.upper() == "BOTTOMS":
+                main_cats = ["BOTTOMS", "bottom", "bottoms", "pants", "pant"]
+            elif normalized_main and normalized_main.upper() == "OUTER":
+                main_cats = ["OUTER", "outer", "outers"]
 
+            if main_cats:
+                filters.append(self._main_filter_condition(main_cats))
+
+        detail_cats = None
         if single_detail_cat:
-            filters.append({"category_sub": single_detail_cat})
+            detail_cats = [self._normalize_detail_category(single_detail_cat)]
         elif target_detail_cats:
-            if len(target_detail_cats) == 1:
-                filters.append({"category_sub": target_detail_cats[0]})
-            elif len(target_detail_cats) > 1:
-                filters.append({"$or": [{"category_sub": cat} for cat in target_detail_cats]})
+            detail_cats = [self._normalize_detail_category(cat) for cat in target_detail_cats]
+            detail_cats = [cat for cat in detail_cats if cat]
+        if detail_cats:
+            filters.append(self._detail_filter_condition(detail_cats))
 
         if len(filters) == 1:
             return filters[0]
@@ -440,11 +587,14 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                 meta = self._metadata_cache.get(product_id, {})
                 product_color = meta.get('color', '')
                 product_styles = meta.get('style_tags', [])
-                product_sub = meta.get('category_sub', '')
+                detail_value = str(meta.get(self.DETAIL_FIELD, "") or "").strip()
+                normalized_details = [self._normalize_detail_category(detail_value)] if detail_value else []
+                avoid_detail_lower = {d.lower() for d in avoid_detail_cats}
+                product_sub = normalized_details[0] if normalized_details else ""
 
                 if product_color and product_color.lower() in [c.lower() for c in avoid_colors]:
                     continue
-                if product_sub and product_sub.lower() in [c.lower() for c in avoid_detail_cats]:
+                if product_sub and product_sub.lower() in avoid_detail_lower:
                     continue
 
                 brightness_bonus = 0.0
@@ -488,6 +638,7 @@ class EmbeddingBuyingTrigger(BuyingTriggerInterface):
                     'color': product_color,
                     'styles': product_styles,
                     'category_sub': product_sub,
+                    'category_main_candidates': self._meta_values(meta, "category_main", "broad_cat"),
                 })
 
             if all_similarities:

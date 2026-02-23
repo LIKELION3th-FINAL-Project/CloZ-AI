@@ -14,6 +14,7 @@ from .generation_model import GenerationModelInterface, GenerationResult
 from ..utils.detail_category import DETAIL_CAT_RULES, normalize_detail_category
 from ..models import OutfitSet, ItemInfo
 from ..adapters.main_adapter import convert_outfit_to_outfitset, load_classification_results
+from src.generation_pipeline.fashion_engine.video_preview import GeminiVideoPreviewGenerator
 
 
 class RealGenerationModel(GenerationModelInterface):
@@ -131,6 +132,7 @@ class RealGenerationModel(GenerationModelInterface):
             "formal": "오피스",
             "포멀": "오피스",
         }
+        self.video_preview = GeminiVideoPreviewGenerator()
 
     def generate(
         self,
@@ -279,7 +281,7 @@ class RealGenerationModel(GenerationModelInterface):
             agent_json, top_k=rec_top_k
         )
         recs_scope = self._to_scope_recs(recs_raw)
-        scope_order = ("TOP", "BOTTOM", "OUTER")
+        scope_order = ("TOP", "BOTTOM")
 
         def _scope_counts(scope_map: Dict[str, List[Dict[str, Any]]]) -> str:
             return ", ".join(f"{scope}={len(scope_map.get(scope, []))}" for scope in scope_order)
@@ -414,8 +416,10 @@ class RealGenerationModel(GenerationModelInterface):
         if vton_result and vton_result.get("final_path"):
             output_image = vton_result["final_path"]
 
+        output_video = self.video_preview.generate_from_image(output_image) if output_image else None
+
         outfit_set = convert_outfit_to_outfitset(
-            best_outfit, output_image, self._classification_results, user_id
+            best_outfit, output_image, self._classification_results
         )
 
         return GenerationResult(
@@ -428,6 +432,8 @@ class RealGenerationModel(GenerationModelInterface):
                     "best_score": best_outfit.get("final_score", 0),
                     "harmony_score": best_outfit.get("harmony_score", 0),
                     "vton_result": vton_result,
+                    "video_preview_path": output_video,
+                    "video_preview_enabled": self.video_preview.enabled,
                     "agent_json": agent_json,
             },
         )

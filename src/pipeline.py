@@ -361,6 +361,9 @@ class CloZPipeline:
         if outfit.image_url:
             print(f"  이미지: {outfit.image_url}")
         if gen_result and gen_result.metadata:
+            video_path = gen_result.metadata.get("video_preview_path")
+            if video_path:
+                print(f"  영상: {video_path}")
             score = gen_result.metadata.get("best_score", 0)
             if score:
                 print(f"  점수: {score:.4f}")
@@ -377,7 +380,6 @@ class CloZPipeline:
         print("1. 전체 (FULL)")
         print("2. 상의 (TOP)")
         print("3. 하의 (BOTTOM)")
-        print("4. 아우터 (OUTER)")
 
         choice = input("\n선택 (기본값 1): ").strip()
         if not choice:
@@ -387,11 +389,10 @@ class CloZPipeline:
             "1": FeedbackScope.FULL,
             "2": FeedbackScope.TOP,
             "3": FeedbackScope.BOTTOM,
-            "4": FeedbackScope.OUTER,
         }
 
-        # 공백/쉼표 모두 허용: "3 4", "3,4", "3, 4"
-        indices = re.findall(r"[1-4]", choice)
+        # 공백/쉼표 모두 허용: "2 3", "2,3", "2, 3"
+        indices = re.findall(r"[1-3]", choice)
         scopes = [mapping[idx] for idx in indices if idx in mapping]
         return scopes if scopes else [FeedbackScope.FULL]
 

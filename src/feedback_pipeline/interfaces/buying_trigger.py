@@ -166,7 +166,6 @@ class BuyingTriggerInterface(ABC):
                 - FULL: 전체 코디
                 - TOP: 상의만
                 - BOTTOM: 하의만
-                - OUTER: 아우터만
             current_outfit: 현재 코디 (참조용)
             limit: 추천 개수 (기본 5개)
             context: 추가 컨텍스트
@@ -191,7 +190,6 @@ class BuyingTriggerInterface(ABC):
         scope_to_category = {
             FeedbackScope.TOP: "상의",
             FeedbackScope.BOTTOM: "바지",
-            FeedbackScope.OUTER: "아우터",
             FeedbackScope.FULL: None,
         }
         return scope_to_category.get(feedback_scope)

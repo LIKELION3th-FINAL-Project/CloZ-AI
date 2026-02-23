@@ -636,7 +636,7 @@ class ManagerAgent:
         scope_values = set(self._feedback_scope_values(feedback))
         if "FULL" in scope_values:
             return None
-        mapping = {"TOP": "tops", "BOTTOM": "bottoms", "OUTER": "outers"}
+        mapping = {"TOP": "tops", "BOTTOM": "bottoms"}
         mapped = [mapping[s] for s in scope_values if s in mapping]
         return mapped or None
 

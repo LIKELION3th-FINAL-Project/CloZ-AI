@@ -5,14 +5,14 @@ LLM 추상화 레이어
 """
 
 from .base_llm import BaseLLM, LLMConfig, LLMResponse
-from .openai_llm import OpenAILLM
+from .gemini_llm import GeminiLLM
 from .factory import LLMFactory, LLMProvider
 
 __all__ = [
     "BaseLLM",
     "LLMConfig",
-    "LLMResponse",
-    "OpenAILLM",
+    "LLMResponse"
+    "GeminiLLM",
     "LLMFactory",
     "LLMProvider",
 ]

@@ -44,7 +44,7 @@ from .llm import (
     BaseLLM,
     LLMConfig,
     LLMResponse,
-    OpenAILLM,
+    GeminiLLM,
     LLMFactory,
     LLMProvider,
 )
@@ -93,7 +93,7 @@ __all__ = [
     "BaseLLM",
     "LLMConfig",
     "LLMResponse",
-    "OpenAILLM",
+    "GeminiLLM",
     "LLMFactory",
     "LLMProvider",
     # Storage

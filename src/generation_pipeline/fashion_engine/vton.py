@@ -4,6 +4,7 @@ from loguru import logger
 from fashn_vton import TryOnPipeline
 from pathlib import Path
 import os
+from .sam3_processor import SAM3Processor
 
 class VTONManager:
     """가상 피팅(Virtual Try-On) 실행 및 이미지 생성 클래스"""
@@ -13,7 +14,7 @@ class VTONManager:
     DEFAULT_NUM_TIMESTEPS = 30    # diffusion 샘플링 스텝 수
     DEFAULT_SEED = 42             # 재현용 랜덤 시드
     
-    def __init__(self, guidance_scale: Union[float, None] = None, num_timesteps: Union[int, None] = None, seed: Union[int, None] = None):
+    def __init__(self, guidance_scale: Union[float, None] = None, num_timesteps: Union[int, None] = None, seed: Union[int, None] = None, config: Union[Dict, None] = None):
         self.pipeline = None
         self.vton_weights_dir = self._resolve_weights_dir()
         
@@ -21,6 +22,9 @@ class VTONManager:
         self.guidance_scale = guidance_scale if guidance_scale is not None else self.DEFAULT_GUIDANCE_SCALE
         self.num_timesteps = num_timesteps if num_timesteps is not None else self.DEFAULT_NUM_TIMESTEPS
         self.seed = seed if seed is not None else self.DEFAULT_SEED
+        
+        # SAM3 프로세서 초기화
+        self.sam3 = SAM3Processor(config=config)
         
         try:
             self.pipeline = TryOnPipeline(weights_dir=self.vton_weights_dir)
@@ -84,10 +88,13 @@ class VTONManager:
 #     # logger.info(f" - outer: {outers['path']}")
         
         try:
+            # 하의 이미지 준비 (SAM3 적용)
+            pants_img, pants_meta = self.sam3.get_optimal_garment_image(pants['path'], "bottoms")
+            
             # 1. 하의 적용 (원본 이미지에 하의 합성)
             res_bottoms = self.pipeline(
                 person_image=person_img, 
-                garment_image=Image.open(pants['path']).convert("RGB"), 
+                garment_image=pants_img, 
                 category="bottoms",
                 guidance_scale=self.guidance_scale,
                 num_timesteps=self.num_timesteps,
@@ -96,10 +103,13 @@ class VTONManager:
             bottom_path = f"{output_prefix}_q{idx}_bottom.png"
             res_bottoms.images[0].save(bottom_path)
             
+            # 상의 이미지 준비 (SAM3 적용)
+            shirt_img, shirt_meta = self.sam3.get_optimal_garment_image(shirt['path'], "tops")
+            
             # 2. 상의 적용 (하의 합성 결과에 상의 합성)
             res_final = self.pipeline(
                 person_image=res_bottoms.images[0], 
-                garment_image=Image.open(shirt['path']).convert("RGB"), 
+                garment_image=shirt_img, 
                 category="tops",
                 guidance_scale=self.guidance_scale,
                 num_timesteps=self.num_timesteps,
@@ -112,7 +122,9 @@ class VTONManager:
             
             return {
                 "bottom_path": bottom_path,
-                "final_path": final_path
+                "final_path": final_path,
+                "pants_meta": pants_meta,
+                "shirt_meta": shirt_meta
             }
         except Exception as e:
             logger.error(f"VTON 이미지 생성 실패: {e}")

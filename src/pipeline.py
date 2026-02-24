@@ -246,33 +246,51 @@ class CloZPipeline:
         self._last_generation_result = result["generation_result"]
 
         self._display_outfit(current_outfit, result["generation_result"])
+        pending_ask_more = False
+        pending_scopes = []
+        pending_question = ""
 
         while True:
             self._print_header("피드백")
             self._display_outfit_summary(current_outfit)
 
-            is_positive_input = input("\n이 코디가 마음에 드시나요? (y/n): ").lower().strip()
-            is_positive = is_positive_input == "y"
+            if pending_ask_more:
+                print(f"\n[추가 질문]: {pending_question}")
+                scopes = pending_scopes if pending_scopes else self._get_scopes_from_user()
+                feedback_text = input("\n추가로 어떤 점이 마음에 안 드시나요?\n입력: ").strip()
+                if not feedback_text:
+                    print("추가 피드백을 입력해주세요.")
+                    continue
+                pending_ask_more = False
+                pending_question = ""
+            else:
+                while True:
+                    is_positive_input = input("\n이 코디가 마음에 드시나요? (y/n): ").strip()
+                    if is_positive_input in {"y", "Y", "n", "N"}:
+                        break
+                    print("입력은 y 또는 n만 가능합니다. 다시 입력해주세요.")
 
-            if is_positive:
-                fb_result = self.process_feedback(
-                    session_id=session.session_id,
-                    user_id=user_id,
-                    is_positive=True,
-                    current_outfit=current_outfit,
-                    feedback_text="",
-                )
-                print(f"\n{fb_result['decision'].message}")
-                self.manager.end_session(session.session_id, SessionStatus.COMPLETED)
-                break
+                is_positive = is_positive_input.lower() == "y"
 
-            # NO 피드백
-            scopes = self._get_scopes_from_user()
-            feedback_text = input("\n어떤 점이 마음에 안 드시나요?\n입력: ").strip()
+                if is_positive:
+                    fb_result = self.process_feedback(
+                        session_id=session.session_id,
+                        user_id=user_id,
+                        is_positive=True,
+                        current_outfit=current_outfit,
+                        feedback_text="",
+                    )
+                    print(f"\n{fb_result['decision'].message}")
+                    self.manager.end_session(session.session_id, SessionStatus.COMPLETED)
+                    break
 
-            if not feedback_text:
-                print("피드백을 입력해주세요.")
-                continue
+                # NO 피드백
+                scopes = self._get_scopes_from_user()
+                feedback_text = input("\n어떤 점이 마음에 안 드시나요?\n입력: ").strip()
+
+                if not feedback_text:
+                    print("피드백을 입력해주세요.")
+                    continue
 
             print("\n분석 중...")
             fb_result = self.process_feedback(
@@ -323,6 +341,9 @@ class CloZPipeline:
                 break
 
             elif decision.action == ActionType.ASK_MORE:
+                pending_ask_more = True
+                pending_scopes = scopes
+                pending_question = decision.message or "조금 더 구체적으로 알려주세요."
                 continue
 
             elif decision.action == ActionType.REGENERATE:
@@ -381,20 +402,42 @@ class CloZPipeline:
         print("2. 상의 (TOP)")
         print("3. 하의 (BOTTOM)")
 
-        choice = input("\n선택 (기본값 1): ").strip()
-        if not choice:
-            return [FeedbackScope.FULL]
-
         mapping = {
             "1": FeedbackScope.FULL,
             "2": FeedbackScope.TOP,
             "3": FeedbackScope.BOTTOM,
         }
+        while True:
+            choice = input("\n선택 (기본값 1): ").strip()
+            if not choice:
+                return [FeedbackScope.FULL]
 
-        # 공백/쉼표 모두 허용: "2 3", "2,3", "2, 3"
-        indices = re.findall(r"[1-3]", choice)
-        scopes = [mapping[idx] for idx in indices if idx in mapping]
-        return scopes if scopes else [FeedbackScope.FULL]
+            # 숫자/공백/쉼표 외 문자는 허용하지 않음
+            if re.search(r"[^0-9,\s]", choice):
+                print("유효한 번호만 입력해주세요. 예: 1 또는 2 3")
+                continue
+
+            # 공백/쉼표 모두 허용: "2 3", "2,3", "2, 3"
+            tokens = [t for t in re.split(r"[\s,]+", choice) if t]
+            if not tokens:
+                print("유효한 번호만 입력해주세요. 예: 1 또는 2 3")
+                continue
+
+            invalid = [t for t in tokens if t not in mapping]
+            if invalid:
+                print("선택은 1, 2, 3만 가능합니다. 다시 입력해주세요.")
+                continue
+
+            # 입력 순서 유지 + 중복 제거
+            scopes = []
+            seen = set()
+            for token in tokens:
+                scope = mapping[token]
+                if scope in seen:
+                    continue
+                seen.add(scope)
+                scopes.append(scope)
+            return scopes if scopes else [FeedbackScope.FULL]
 
 
 if __name__ == "__main__":

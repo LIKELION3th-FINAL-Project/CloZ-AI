@@ -373,6 +373,16 @@ class ManagerAgent:
         else:
             # 지능형 컨텍스트 분석 (ContextAnalyzer 사용)
             analysis = self.context_analyzer.analyze_session_context(session, feedback)
+            has_specific_signal = self._has_specific_feedback_signal(feedback.feedback_text)
+            ask_more_used = self._has_ask_more_history(session)
+
+            # 정책:
+            # 1) ASK_MORE는 세션당 최대 1회
+            # 2) 명시 신호(세부카테고리/핏/색상 등)가 있으면 즉시 명확 처리
+            if has_specific_signal:
+                analysis["is_clear"] = True
+            if ask_more_used and not analysis.get("is_clear", False):
+                analysis["is_clear"] = True
 
             if not analysis["is_clear"]:
                 # 모호함 → ASK_MORE
@@ -626,6 +636,31 @@ class ManagerAgent:
                     break
         return extracted
 
+    def _has_ask_more_history(self, session: SessionLog) -> bool:
+        for entry in session.entries:
+            if entry.entry_type != "action":
+                continue
+            action = (entry.content or {}).get("action")
+            if action == ActionType.ASK_MORE.value:
+                return True
+        return False
+
+    def _has_specific_feedback_signal(self, feedback_text: str) -> bool:
+        text = (feedback_text or "").strip().lower()
+        if not text:
+            return False
+
+        # 명시 카테고리/속성 신호가 있으면 모호하지 않은 피드백으로 간주
+        signals = [
+            "데님", "청바지", "denim", "jean", "치노", "슬랙스", "trouser",
+            "반팔", "티셔츠", "tee", "셔츠", "shirt", "맨투맨", "sweatshirt",
+            "니트", "knit", "아우터", "자켓", "코트", "패딩",
+            "와이드", "슬림", "스트레이트", "오버핏", "핏",
+            "밝", "어둡", "블랙", "화이트", "네이비", "베이지", "그레이",
+            "색", "컬러", "소재", "무드", "스타일",
+        ]
+        return any(token in text for token in signals)
+
     def _normalized_feedback_scopes(self, feedback: FeedbackInput) -> List[FeedbackScope]:
         return feedback.feedback_scopes or [FeedbackScope.FULL]
 
@@ -704,7 +739,7 @@ class ManagerAgent:
             feedback_text=refined_query,  # 보강된 쿼리 사용
             feedback_scope=scope_for_buying,
             current_outfit=feedback.current_outfit,
-            limit=5,
+            limit=3,
             context=context  # 구조화된 정보 전달
         )
 
@@ -762,7 +797,7 @@ class ManagerAgent:
             feedback_text=feedback.feedback_text,
             feedback_scope=primary_scope,
             current_outfit=feedback.current_outfit,
-            limit=5
+            limit=3
         )
 
         return ManagerDecision(
@@ -910,7 +945,7 @@ class ManagerAgent:
                 feedback_text=combined_feedback,  # 종합 피드백 사용
                 feedback_scope=primary_scope,
                 current_outfit=feedback.current_outfit,
-                limit=5,
+                limit=3,
                 context=context  # 구조화된 정보 전달
             )
 

@@ -177,6 +177,34 @@ class FashionRecommender:
 
         return sum(sims) / (sum(weights[:len(sims)]) or 1.0)
 
+    def _resolve_reference_styles(self, styles: List[str], top_n: int = 3) -> Dict[str, List[str]]:
+        """요청 스타일별 실제 참고 ref 스타일 후보(top-n)를 반환"""
+        if not styles or not self.style_profiles:
+            return {}
+
+        resolved = {}
+        for style in styles[:3]:
+            style_text = str(style or "").strip()
+            if not style_text:
+                continue
+            norm_style = unicodedata.normalize("NFC", style_text)
+            if norm_style in self.style_profiles:
+                resolved[style_text] = [norm_style]
+                continue
+
+            query_emb = self.encoder.encode_text(style_text).to(torch.float32).cpu()
+            query_emb /= (query_emb.norm() + 1e-8)
+
+            scored = []
+            for ref_name, ref_embs in self.style_profiles.items():
+                ref_mean = ref_embs.to(torch.float32).mean(dim=0).cpu()
+                ref_mean /= (ref_mean.norm() + 1e-8)
+                sim = float((query_emb * ref_mean).sum())
+                scored.append((ref_name, sim))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            resolved[style_text] = [name for name, _ in scored[:top_n]]
+        return resolved
+
     def _calculate_color_similarity(self, item_path: str, colors: List[str]) -> float:
         """색상 키워드와 이미지 유사도 (텍스트 기반)"""
         if not colors: return 0.5
@@ -221,6 +249,11 @@ class FashionRecommender:
 
         q_emb /= (q_emb.norm() + 1e-8)
         all_results = {}
+        ref_map = self._resolve_reference_styles(styles, top_n=3)
+        logger.info(
+            f"[RECOMMEND][ref_db] style_query={styles}, "
+            f"target_categories={target_cats}, ref_candidates={ref_map if ref_map else 'none'}, top_k={top_k}"
+        )
 
         for cat in target_cats:
             candidates = []

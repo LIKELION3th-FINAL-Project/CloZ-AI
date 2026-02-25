@@ -75,3 +75,6 @@ src/fashn_vton/
 
 # experiments
 note.*
+
+# 가중치
+weights/

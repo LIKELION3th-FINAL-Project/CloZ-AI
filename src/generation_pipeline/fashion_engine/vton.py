@@ -1,7 +1,7 @@
 from PIL import Image
 from typing import Optional, Dict, Tuple, Union
 from loguru import logger
-from fashn_vton import TryOnPipeline
+# from fashn_vton import TryOnPipeline
 from pathlib import Path
 import os
 from .sam3_processor import SAM3Processor

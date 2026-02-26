@@ -83,6 +83,8 @@ class UnderstandModel:
         self.request_additional_info_sys_prompt = self.config_file["model"].get(
             "request_additional_info_sys_prompt", base_prompt
         )
+        self.interact_with_user_sys_prompt = self.config_file["model"]["interact_with_user_sys_prompt"]
+        
         self.model_name = self.config_file["model"]["model_name"]
         self.api_key = os.getenv("UPSTAGE_API_KEY")
         self.reasoning_effort = self.config_file["model"]["reasoning_effort"]
@@ -119,6 +121,20 @@ class UnderstandModel:
         logger.info(f"MODEL RESP: {response.choices[0].message.content}")
         return response.choices[0].message.content
     
+    def interact_with_user_chat(self, user_prompt: str = ""):
+        messages = [build_system_prompt(self.interact_with_user_sys_prompt, model_response)]
+        messages.append(build_user_prompt(user_prompt))
+        
+        response = self.client.chat.completions.create(
+            model = self.model_name,
+            messages = messages,
+            temperature = self.temperature,
+            reasoning_effort = self.reasoning_effort,
+        )
+        logger.info(f"MODEL RESP: {response.choices[0].message.content}")
+        return response.choices[0].message.content
+    
+    
     def clarify_chat(self, first_model_response, user_prompt: str = ""):
         messages = [build_system_prompt(self.clarify_sys_prompt, first_model_response)]
         messages.append(build_user_prompt(user_prompt))
@@ -131,6 +147,9 @@ class UnderstandModel:
         )
         logger.info(f"MODEL RESP: {response.choices[0].message.content}")
         return response.choices[0].message.content
+    
+    
+        
 
 # Understand model 동작 테스트용
 if __name__ == "__main__":

@@ -29,6 +29,12 @@ model:
     사용자의 요청을 기반으로 주어지는 JSON템플릿의 내용을 보완하세요.
     출력은 반드시 위 템플릿과 같은 JSON형식으로만 제공하고, 다른 설명이나 문장은 포함하지 마세요.
     답변은 영어로 하세요.
+  interact_with_user_sys_prompt: |
+    당신은 패션 추천 시스템의 의사결정 모듈입니다.
+    사용자의 요청과 주어지는 JSON파일의 내용을 보고, 사용자와 대화를 하세요.
+    {model_response}
+    답변은 반드시 한국어로 하세요.
+
   base_url: "https://api.upstage.ai/v1"
   reasoning_effort: "high"
   stream: True

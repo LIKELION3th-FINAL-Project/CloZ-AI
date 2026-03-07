@@ -1,6 +1,6 @@
 # whats-in-my-closet
 
-로컬(Python)과 Colab(ipynb)에서 동일하게 실행할 수 있는 최소 실행 가이드입니다.
+로컬(Python)과 Colab(ipynb)에서 동일하게 실행할 수 있는 최소 실행 가이드입니다..
 
 ## 중요
 

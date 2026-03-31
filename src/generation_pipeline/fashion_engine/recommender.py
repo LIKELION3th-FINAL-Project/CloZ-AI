@@ -122,6 +122,43 @@ class FashionRecommender:
             )
         return self.item_db
 
+    def load_wardrobe_from_items(self, closet_data: dict):
+
+        scope_to_kor = {"TOP": "상의", "BOTTOM": "하의", "OUTER": "아우터"}
+        self.item_db = {}
+
+        for scope, items in closet_data.items():
+            kor_cat = scope_to_kor.get(scope.upper())
+            if not kor_cat:
+                continue
+            db_prefix = self.cat_to_db.get(kor_cat, scope.lower())
+
+            for item in items:
+                raw_emb = item.get("embedding")
+                if not raw_emb:
+                    continue
+
+                emb_tensor = torch.tensor(raw_emb, dtype=torch.float32)
+                emb_tensor /= (emb_tensor.norm() + 1e-8)
+
+                item_id = item.get("id", "") or item.get("image_url", "")
+                fname = item_id.split("/")[-1] if item_id else f"item_{len(self.item_db)}"
+                if not fname:
+                    fname = f"item_{len(self.item_db)}"
+
+                self.item_db[fname] = {
+                    "id": f"{db_prefix}/{fname}",
+                    "category": kor_cat,
+                    "path": item.get("image_url", ""),
+                    "embedding": emb_tensor.cpu(),
+                    "style_cat": item.get("style_cat", ""),
+                }
+
+        logger.info(f"[closet] Loaded {len(self.item_db)} items from request closet data.")
+        if not self.item_db:
+            logger.warning("[closet] 옷장 아이템이 0개입니다. request closet에 embedding이 포함되어 있는지 확인하세요.")
+        return self.item_db
+
     def load_styles(self):
         """ChromaDB에서 스타일별 레퍼런스 임베딩 로드"""
         try:

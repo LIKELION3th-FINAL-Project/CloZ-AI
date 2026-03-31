@@ -149,10 +149,16 @@ class RealGenerationModel(GenerationModelInterface):
             user_id: 사용자 ID
             constraints: 제약 조건 (색상, 핏 등)
             context: 추가 컨텍스트
+                - user_body_image_path: 사용자 전신 이미지 로컬 경로 (agent에서 tempfile 저장 후 전달)
 
         Returns:
             GenerationResult
         """
+        if context and context.get("user_body_image_path"):
+            self.config["user_body_image"] = context["user_body_image_path"]
+
+        closet_data = context.get("closet_data") if context else None
+
         try:
             from src.generation_pipeline.understand_model.understand_model import extract_json_format
 
@@ -171,7 +177,10 @@ class RealGenerationModel(GenerationModelInterface):
             if constraints:
                 agent_json = self._apply_constraints(agent_json, constraints)
 
-            return self._run_generation_pipeline(agent_json, user_id)
+            if closet_data:
+                self.recommender.load_wardrobe_from_items(closet_data)
+
+            return self._run_generation_pipeline(agent_json, user_id, skip_wardrobe_load=bool(closet_data))
 
         except Exception as e:
             logger.exception(f"Generation failed: {e}")
@@ -260,13 +269,15 @@ class RealGenerationModel(GenerationModelInterface):
         candidate_pool: Optional[Dict[str, List[str]]] = None,
         include_outer: bool = True,
         keep_map: Optional[Dict[str, set]] = None,
+        skip_wardrobe_load: bool = False,
     ) -> GenerationResult:
         """추천 -> 조합 -> 평가 -> VTON 실행"""
 
         # 실서비스에서 OUTER는 무효화되어 항상 False.
         include_outer = False
 
-        self.recommender.load_user_wardrobe()
+        if not skip_wardrobe_load:
+            self.recommender.load_user_wardrobe()
         self.recommender.load_styles()
 
         # candidate_pool 기반 재생성에서는 기본 top_k(예: 3)로 먼저 자르면
